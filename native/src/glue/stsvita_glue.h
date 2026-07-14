@@ -67,6 +67,7 @@ void    stsv_sound_set_volume(int32_t source, float volume);
 void    stsv_sound_set_pitch(int32_t source, float pitch);
 void    stsv_sound_set_looping(int32_t source, int32_t loop);
 int64_t stsv_music_open(const void *data, int32_t len);
+int64_t stsv_music_open_path(const void *path_utf8, int32_t len);
 void    stsv_music_free(int64_t handle);
 void    stsv_music_play(int64_t handle);
 void    stsv_music_pause(int64_t handle);

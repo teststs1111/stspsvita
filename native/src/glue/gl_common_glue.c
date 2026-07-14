@@ -20,7 +20,7 @@ void stsv_tex_note_path(const void *utf8, int32_t len) {
 }
 
 /* Per-frame runtime stb_dxt compression + glTexImage upload time, polled by
- * the [hitch] logger like the ft/subtex accumulators. */
+ * the [hitch] logger like the ft/subtex accumulators for frame-drop attribution. */
 static int64_t stsv_dxt_us_accum;
 static int32_t stsv_dxt_calls_accum;
 static int64_t stsv_upload_us_accum;
@@ -155,6 +155,24 @@ static size_t stsv_pool_maxfree(void) {
     return maxfree;
 }
 
+/* These UI textures are loaded at the end of ImageMaster's preload or while
+ * create() constructs DungeonMapScreen. The dedicated pools can already be
+ * below their safety margin by then, which used to replace them with 4x4
+ * blanks. Admit only this known-critical set into the existing bounded spill
+ * before create() returns; unrelated boot art remains barred so draw buffers
+ * retain their native headroom. */
+static int stsv_boot_critical_texture(void) {
+    return strstr(stsv_tex_path, "/images/ui/campfire/") != NULL
+        || strstr(stsv_tex_path, "/images/ui/topPanel/") != NULL
+        || strstr(stsv_tex_path, "/images/ui/map/legend2") != NULL
+        || strstr(stsv_tex_path, "/images/ui/map/map") != NULL
+        || strstr(stsv_tex_path, "/images/ui/option/inputPaneFg") != NULL
+        || strstr(stsv_tex_path, "/images/ui/event/roomTextPanel") != NULL
+        || (strstr(stsv_tex_path, "/images/npcs/") != NULL
+            && strstr(stsv_tex_path, "Chest") != NULL)
+        || strstr(stsv_tex_path, "/powers/powers") != NULL;
+}
+
 /* Read-only preview of stsv_tex_can_alloc: would a texture of this size be
  * admitted right now? Nothing is reserved. VitaFileHandle asks BEFORE reading
  * a big .dds payload off the SD card — the load-then-drop waste (17MB of
@@ -165,7 +183,8 @@ int32_t stsv_tex_would_fit(int32_t need) {
     if (stsv_pool_maxfree() > n + (1u << 20)) {
         return 1;
     }
-    if (stsv_spill_enabled && stsv_spill_used + n <= STSV_SPILL_BUDGET) {
+    if ((stsv_spill_enabled || stsv_boot_critical_texture())
+            && stsv_spill_used + n <= STSV_SPILL_BUDGET) {
         void *probe = malloc(n + STSV_SPILL_RESERVE);
         if (probe != NULL) {
             free(probe);
@@ -180,14 +199,17 @@ static int stsv_tex_can_alloc(size_t need, int width, int height, const char *ta
     if (maxfree > need + (1u << 20)) {
         return 1;
     }
-    if (stsv_spill_enabled && stsv_spill_used + need <= STSV_SPILL_BUDGET) {
+    int boot_critical = !stsv_spill_enabled && stsv_boot_critical_texture();
+    if ((stsv_spill_enabled || boot_critical)
+            && stsv_spill_used + need <= STSV_SPILL_BUDGET) {
         void *probe = malloc(need + STSV_SPILL_RESERVE);
         if (probe != NULL) {
             free(probe);
             stsv_spill_used += need;
             stsv_spill_note(stsv_bound_tex(), need);
-            fprintf(stderr, "[DIAG dxt] SPILL%s %dx%d need=%dKB spill_used=%dKB path=%s\n",
-                    tag, width, height, (int) (need >> 10),
+            fprintf(stderr, "[DIAG dxt] %sSPILL%s %dx%d need=%dKB spill_used=%dKB path=%s\n",
+                    boot_critical ? "BOOT-" : "", tag,
+                    width, height, (int) (need >> 10),
                     (int) (stsv_spill_used >> 10), stsv_tex_path);
             return 1;
         }
@@ -339,19 +361,10 @@ void stsv_tex_image_compressed(int target, int level, int internal_format,
                            up_w, up_h, border, image_size, blocks);
     stsv_upload_time(up_t0);
 #if defined(__vita__) || defined(VITA)
-    /* Report the first GL error per compressed upload, naming the texture.
-     * If cardui/cards/vfx pages error here, the compressed upload is the
-     * culprit; if they upload clean, the blank is a draw-path issue. */
-    {
-        GLenum uerr = glGetError();
-        static int ulogged;
-        if (uerr != GL_NO_ERROR && ulogged < 120) {
-            fprintf(stderr, "[DIAG glerr] upload 0x%04x %dx%d(up %dx%d) fmt=0x%x size=%d path=%s\n",
-                    (unsigned) uerr, width, height, up_w, up_h,
-                    (unsigned) internal_format, image_size, stsv_tex_path);
-            ulogged++;
-        }
-    }
+    /* vitaGL reports a benign GL_INVALID_ENUM after compressed uploads.
+     * Drain it so it cannot leak into game code, without synchronously
+     * logging every texture load to the memory card. */
+    (void) glGetError();
     stsv_mark_compressed();
 #endif
 }

@@ -43,6 +43,8 @@ public class VitaAudio implements Audio {
 
     @Import(name = "stsv_music_open")
     static native long nMusicOpen(Address data, int len);
+    @Import(name = "stsv_music_open_path")
+    static native long nMusicOpenPath(Address path, int len);
     @Import(name = "stsv_music_free")
     static native void nMusicFree(long handle);
     @Import(name = "stsv_music_play")
@@ -106,18 +108,11 @@ public class VitaAudio implements Audio {
     @Override
     public Music newMusic(FileHandle file) {
         long t0 = System.nanoTime();
-        byte[] ogg = file.readBytes();
-        long readMs = (System.nanoTime() - t0) / 1000000L;
-        if (ogg.length == 0) {
-            return new SilentMusic();
-        }
-        ByteBuffer buffer = BufferUtils.newUnsafeByteBuffer(ogg.length);
-        BufferUtils.copy(ogg, 0, buffer, ogg.length);
-        long handle = nMusicOpen(Buffers.addr(buffer), ogg.length);
-        BufferUtils.disposeUnsafeByteBuffer(buffer);
+        byte[] path = file.path().getBytes();
+        long handle = nMusicOpenPath(Address.ofData(path), path.length);
         long totalMs = (System.nanoTime() - t0) / 1000000L;
-        VitaNatives.log("[audio] newMusic " + file.path() + " " + ogg.length
-                + "B read=" + readMs + "ms total=" + totalMs + "ms"
+        VitaNatives.log("[audio] newMusic " + file.path() + " path-stream total="
+                + totalMs + "ms"
                 + (handle == 0 ? " OPEN-FAILED" : ""));
         if (handle == 0) {
             return new SilentMusic();

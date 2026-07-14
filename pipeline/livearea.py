@@ -33,11 +33,9 @@ TEMPLATE_XML = """<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 </livearea>
 """
 
-MAGICK = shutil.which("magick") or shutil.which("convert")
-
 
 def magick(*args: str) -> None:
-    subprocess.run([MAGICK, *args], check=True)
+    subprocess.run(["magick", *args], check=True)
 
 
 def to_png8(path: Path) -> None:
@@ -67,11 +65,13 @@ def main() -> int:
     ap.add_argument("--lang", default="eng", help="title-logo language (title_logo/<lang>.png)")
     args = ap.parse_args()
 
-    if not MAGICK:
-        print("ImageMagick not found — needed to build LiveArea assets", file=sys.stderr)
+    if not shutil.which("magick"):
+        print("ImageMagick (`magick`) not found — needed to build LiveArea assets", file=sys.stderr)
         return 2
 
-    assets = Path(args.work) / "assets_vita"
+    # LiveArea art needs the original PNG/JPG inputs. The Vita asset pass may
+    # replace those files with DDS siblings, while assets_raw remains intact.
+    assets = Path(args.work) / "assets_raw"
     bg_src = pick(assets / "title" / "title.jpg", assets / "title" / "title.png")
     logo_dir = assets / "images" / "ui" / "title_logo"
     logo_src = pick(logo_dir / f"{args.lang}.png", logo_dir / "eng.png",
@@ -83,6 +83,7 @@ def main() -> int:
 
     bg0 = contents / "bg0.png"
     startup = contents / "startup.png"
+    loading = contents / "loading.png"
     icon0 = out / "icon0.png"
 
     # title.jpg is a 2048² atlas page: the scene fills the top-left and the
@@ -101,6 +102,24 @@ def main() -> int:
            "(", str(logo_src), "-resize", "260x140", ")",
            "-gravity", "center", "-composite", str(startup))
 
+    # Native boot loading screen: replace vitaGL's spinning logo with the
+    # game's own title scene while TeaVM and CardCrawlGame preload. Keep this
+    # derived from the user's game files, just like the LiveArea artwork, so
+    # no Mega Crit content is stored in the repository.
+    magick(str(scene), "-resize", "960x544^", "-gravity", "center",
+           "-extent", "960x544", "-modulate", "48,72,100",
+           "-fill", "rgba(5,8,12,0.24)", "-draw", "rectangle 0,0 960,544",
+           "(", str(logo_src), "-resize", "430x243", ")",
+           "-gravity", "center", "-geometry", "+0-42", "-composite",
+           "-stroke", "#d6b55f", "-strokewidth", "1", "-fill", "none",
+           "-draw", "line 354,464 438,464 line 522,464 606,464",
+           "-stroke", "none", "-fill", "#8f7438",
+           "-draw", "polygon 450,464 455,459 460,464 455,469 "
+                    "polygon 500,464 505,459 510,464 505,469",
+           "-fill", "#f1d77d",
+           "-draw", "polygon 475,464 480,457 485,464 480,471",
+           str(loading))
+
     # Bubble icon: a darkened square crop of the scene with the logo on top.
     magick(str(scene), "-resize", "128x128^", "-gravity", "center",
            "-extent", "128x128", "-modulate", "80",
@@ -110,15 +129,15 @@ def main() -> int:
     scene.unlink()
 
     # The Vita packager requires 8-bit LiveArea PNGs (else install fails with
-    # 0x8010113D). Quantize all three.
-    for p in (icon0, bg0, startup):
+    # 0x8010113D). Quantize the generated images.
+    for p in (icon0, bg0, startup, loading):
         to_png8(p)
 
     (contents / "template.xml").write_text(TEMPLATE_XML)
 
     print(f"[livearea] bg   <- {bg_src.relative_to(assets)}")
     print(f"[livearea] logo <- {logo_src.relative_to(assets)}")
-    print(f"[livearea] wrote {icon0}, {bg0}, {startup}, template.xml")
+    print(f"[livearea] wrote {icon0}, {bg0}, {startup}, {loading}, template.xml")
     return 0
 
 

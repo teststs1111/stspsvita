@@ -35,6 +35,13 @@ class StdoutLogger implements Logger {
     }
 
     private void out(String level, String message) {
+        // TipHelper emits the same hover marker every frame while browsing
+        // potion/relic tooltips. stdout is an unbuffered Vita memory-card
+        // file, so this diagnostic spam becomes synchronous render work.
+        if ("TipHelper".equals(tag)
+                && ("TRACE".equals(level) || "DEBUG".equals(level) || "INFO".equals(level))) {
+            return;
+        }
         System.out.println(level + " " + tag + "> " + message);
     }
 

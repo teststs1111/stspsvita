@@ -83,6 +83,11 @@ target_compile_options(${PROJECT_NAME} PRIVATE
   -Wno-error=implicit-function-declaration
   -O2 -mfpu=neon -mcpu=cortex-a9 -fno-strict-aliasing -Wl,-q)
 
+# Suppress vitaGL's built-in spinning logo. The no-op wrapper lives in
+# gl_glue.c; the project renders its own loading frame immediately after init.
+target_link_options(${PROJECT_NAME} PRIVATE
+  "SHELL:-Wl,--wrap=invoke_splashscreen")
+
 target_link_libraries(${PROJECT_NAME}
   vitaGL vitashark SceShaccCgExt mathneon SceShaccCg_stub
   # vitaGL/vitaShark are C++ — pull in the C++ runtime (operator new/delete,
@@ -122,6 +127,13 @@ if(BUNDLE_ASSETS)
   list(APPEND VPK_FILES FILE ${ASSETS} assets)
 endif()
 list(APPEND VPK_FILES FILE ${SCE_SYS} sce_sys)
+# Runtime startup art must live outside sce_sys: the Vita installer owns and
+# filters LiveArea metadata, so unreferenced files in livearea/contents are not
+# guaranteed to be copied into app0. Package a normal root-level copy instead.
+set(LOADING_SCREEN "${SCE_SYS}/livearea/contents/loading.png")
+if(EXISTS "${LOADING_SCREEN}")
+  list(APPEND VPK_FILES FILE "${LOADING_SCREEN}" loading.png)
+endif()
 
 vita_create_self(eboot.bin ${PROJECT_NAME} UNSAFE)
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} eboot.bin

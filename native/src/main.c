@@ -10,19 +10,20 @@
 /* The newlib malloc heap holds TeaVM's Java heap (144MB, committed up front
  * by TEAVM_PSP virtualAlloc=malloc) + native malloc (stb decode + FreeType)
  * + the free space vitaGL falls back to for PER-DRAW vertex buffers.
- * 280MB is the PROVEN-STABLE value. Do not shrink it to grow the vitaGL RAM
- * pool: the 260MB experiment (2026-07-12) grew the pool to 56MB and StS's
- * preload just filled that too, while the tighter newlib made vitaGL's
- * draw-time allocations fail (garbage pointer memcpy crash inside
- * _glDrawElements on embark/continue). Texture headroom must come from
- * DEMAND reduction (dds-compress more, drop unused art), not pool math. */
-int _newlib_heap_size_user = 280 * 1024 * 1024;
+ * 272MB keeps most of the proven-stable 280MB arena while giving vitaGL
+ * about 8MB more dedicated texture space. This compensates for the
+ * full-resolution UI/chest set without repeating the unsafe 260MB experiment
+ * or forcing 9MB of persistent textures into the draw-buffer heap. */
+int _newlib_heap_size_user = 272 * 1024 * 1024;
 
 /* TeaVM's generated main, renamed via -Dmain=stsv_java_main (CMake). */
 int stsv_java_main(int argc, char **argv);
 
 /* Enables SceCtrl analog + SceTouch front-panel sampling (input_glue.c). */
 void stsv_input_init(void);
+
+/* Replaces vitaGL's spinner with the generated title loading frame. */
+void stsv_show_loading_screen(void);
 
 /* Opens the OpenAL device/context for VitaAudio (audio_glue.c). */
 void stsv_audio_init(void);
@@ -73,6 +74,8 @@ int main(int argc, char **argv) {
         (int) (vglMemTotal(VGL_MEM_VRAM) >> 20),
         (int) (vglMemTotal(VGL_MEM_RAM) >> 20),
         (int) (vglMemTotal(VGL_MEM_SLOW) >> 20));
+
+    stsv_show_loading_screen();
 
     stsv_input_init();
     stsv_audio_init();

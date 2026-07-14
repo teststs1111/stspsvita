@@ -3,9 +3,10 @@
 
 TeaVM 0.15.0's C runtime carries homebrew-console paths behind `#if TEAVM_PSP`
 (malloc heap instead of mmap, setjmp fibers, mktime instead of timegm,
-sceKernelLibcTime clock). The Vita needs the same paths, so this activates
-them whenever TEAVM_VITA is defined (the CMake build passes -DTEAVM_VITA=1)
-and fixes the PSP-only APIs that differ on the Vita.
+sceKernelLibcTime clock). The Vita needs the
+exact same paths, so this activates them whenever TEAVM_VITA is defined (the
+CMake build passes -DTEAVM_VITA=1) and fixes the handful of PSP-only APIs that
+differ on the Vita (the pspkernel.h include -> psp2 threadmgr).
 
 Idempotent and anchor-based: safe to re-run after every transpile, tolerant of
 line-number drift. Run by the gradle `transpile` task; a no-op for the host
@@ -231,7 +232,6 @@ def patch_array_data_offset(path: Path) -> bool:
     objectSize already use the constant align(sizeof(TeaVM_Array), itemSize)
     offset, so the fixed offset is the consistent form. Reproduced and
     verified with the scratchpad 32-bit host probe (pre/post System.gc).
-    Candidate for an upstream TeaVM fix.
     """
     text = path.read_text()
     sentinel = "/* STSVITA: fixed array data offset */"
@@ -330,7 +330,7 @@ def patch_controller_model_ps4(path: Path) -> bool:
 
 
 def patch_gc_timing(path: Path) -> bool:
-    """Time every GC pass and log pauses >= 15ms WITH memory context (v2).
+    """Time every GC pass and log pauses >= 100ms WITH memory context (v2).
 
     The combat stutter is young pauses firing every couple of frames
     (294/session, p50 16ms). A young GC triggers when getNextChunkIfPossible
@@ -340,7 +340,6 @@ def patch_gc_timing(path: Path) -> bool:
     exhaustion (free ~0 before), fragmentation (free large but req large),
     and shrink-policy tightness (avail small). req is stale for explicit
     System.gc() calls (only alloc-triggered GCs set it).
-    Keep this only while diagnosing GC pauses.
     """
     text = path.read_text()
     if "STSVITA: gc pause timing" in text:
@@ -372,7 +371,7 @@ def patch_gc_timing(path: Path) -> bool:
         "    meth_otr_GC_doCollectGarbage_stsv_inner();\n"
         "    int64_t stsv_t1 = teavm_currentTimeNano();\n"
         "    int64_t stsv_ms = (stsv_t1 - stsv_t0) / INT64_C(1000000);\n"
-        "    if (stsv_ms >= 15) {\n"
+        "    if (stsv_ms >= 100) {\n"
         "        int64_t stsv_dt = stsv_gc_last_end_ns\n"
         "                ? (stsv_t0 - stsv_gc_last_end_ns) / INT64_C(1000000) : INT64_C(-1);\n"
         "        fprintf(stderr, \"[gc] %s pause %lldms req=%dB free %d->%dKB avail %lldKB dt=%lldms\\n\",\n"

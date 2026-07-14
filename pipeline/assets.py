@@ -67,7 +67,8 @@ def build_dds_encoder(work: Path) -> Path:
 # .dds header keeps the ORIGINAL (logical) dims — the game's layout/UV/srcRect
 # math reads them via texture.getWidth() — while the encoded blocks are half
 # size; stsv_tex_image_compressed infers the actual upload dims from the data
-# size. Applied to every /8-dimensioned image (ddsenc -2 falls back to full-res
+# size. Device-verified 2026-07-12 on the npcs/shoulders/bottomScene trial;
+# now applied to EVERYTHING /8-dimensioned (ddsenc -2 falls back to full-res
 # otherwise). This is what lets the boot preload (cards/cardui/ui/title,
 # ~130MB at full res) fit the vitaGL pools instead of dropping the late
 # preloads (combat buttons, campfire UI, settings/map/reward panels,
@@ -111,8 +112,25 @@ def dds_path_for(img: Path) -> Path:
 # monster/rug backgrounds) renders correctly at half and holds the saving.
 HALF_RES_DENY = (
     "cardui/", "cards/", "vfx/",
-    "images/ui/topPanel/", "images/ui/map/", "images/ui/campfire/",
+    "images/ui/topPanel/", "images/ui/campfire/",
     "images/ui/reward/", "images/ui/option/",
+)
+# The map parchment pages are large standalone textures and rendered correctly
+# in the global-half device run. Keeping the whole directory full-res made the
+# four pages consume about 7MB when DungeonMapScreen opened, exhausting the
+# bounded spill and blanking the map. The compact legend draw was reported
+# missing at half-res, so retain full data for that one texture.
+HALF_RES_DENY_PATHS = ("images/ui/map/legend2.png",)
+# Button faces need full-size data on GXM, but their translucent shadow and
+# outline layers can use native-screen-resolution data. This compensates for
+# the critical UI boot spill without making the controls disappear again.
+HALF_RES_FORCE_PATHS = (
+    "images/ui/topPanel/cancelButtonShadow.png",
+    "images/ui/topPanel/cancelButtonOutline.png",
+    "images/ui/topPanel/confirmButtonShadow.png",
+    "images/ui/topPanel/confirmButtonOutline.png",
+    "images/ui/topPanel/proceedButtonShadow.png",
+    "images/ui/topPanel/proceedButtonOutline.png",
 )
 # Chest/shop interactables live as loose files under images/npcs/ alongside
 # big backgrounds (rug, neow, heart) that DO render at half — so match by name.
@@ -120,7 +138,9 @@ HALF_RES_DENY_NAMES = ("Chest", "merchantObjects")
 
 
 def wants_half_res(rel: str) -> bool:
-    if rel.startswith(HALF_RES_DENY):
+    if rel in HALF_RES_FORCE_PATHS:
+        return True
+    if rel.startswith(HALF_RES_DENY) or rel in HALF_RES_DENY_PATHS:
         return False
     name = rel.rsplit("/", 1)[-1]
     if any(tok in name for tok in HALF_RES_DENY_NAMES):
@@ -162,11 +182,7 @@ def next_pot(n: int) -> int:
     return p
 
 
-def image_magick() -> str | None:
-    return shutil.which("magick") or shutil.which("convert")
-
-
-def pad_npot_atlas_pages(dst_root: Path, jobs: int, magick_cmd: str) -> list[Path]:
+def pad_npot_atlas_pages(dst_root: Path, jobs: int) -> list[Path]:
     """Pad every non-power-of-two .atlas page to POT dimensions.
 
     The Vita GPU (GXM) mangles NPOT texture sampling — the Ironclad's
@@ -205,7 +221,7 @@ def pad_npot_atlas_pages(dst_root: Path, jobs: int, magick_cmd: str) -> list[Pat
     def pad(task: tuple[Path, int, int]) -> None:
         png, pw, ph = task
         subprocess.run(
-            [magick_cmd, str(png), "-background", "none", "-gravity", "NorthWest",
+            ["magick", str(png), "-background", "none", "-gravity", "NorthWest",
              "-extent", f"{pw}x{ph}", str(png)],
             check=True, capture_output=True)
 
@@ -305,10 +321,9 @@ def main() -> int:
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:
             list(ex.map(lambda p: reencode_ogg(*p, args.audio_kbps), audio_jobs))
 
-    magick_cmd = image_magick()
-    if not magick_cmd:
+    if not shutil.which("magick"):
         sys.exit("error: NPOT atlas-page padding needs ImageMagick on PATH")
-    padded = pad_npot_atlas_pages(dst_root, args.jobs, magick_cmd)
+    padded = pad_npot_atlas_pages(dst_root, args.jobs)
 
     dds_encoded = dds_half = dds_skipped = dds_failed = 0
     if not args.no_dds:

@@ -86,9 +86,15 @@ public class VitaApplication implements Application {
             input.update();
             VitaAudio.update(); // refill streaming-music buffers
             executeRunnables();
+            long gameStart = VitaNatives.micros();
             listener.render();
+            long swapStart = VitaNatives.micros();
             graphics.endFrame(); // swap + vsync + frame timing
-            long frameMs = (VitaNatives.micros() - hitchStart) / 1000L;
+            long frameEnd = VitaNatives.micros();
+            long frameMs = (frameEnd - hitchStart) / 1000L;
+            long preMs = (gameStart - hitchStart) / 1000L;
+            long gameMs = (swapStart - gameStart) / 1000L;
+            long swapMs = (frameEnd - swapStart) / 1000L;
             long ft = VitaNatives.ftFrameStats();       // reset every frame so
             long subtex = VitaNatives.subtexFrameStats(); // hitches attribute
             long stb = VitaNatives.imgFrameStats();
@@ -101,7 +107,9 @@ public class VitaApplication implements Application {
                 // mid-frame, not a real stall (process time pauses, RTC not).
                 long wallMs = (VitaNatives.wallMicros() - wallStart) / 1000L;
                 VitaNatives.log("[hitch] frame took " + frameMs + "ms (wall "
-                        + wallMs + "ms, ft " + (ft / 1000) + "ms/" + (ft % 1000)
+                        + wallMs + "ms, pre " + preMs + "ms, game " + gameMs
+                        + "ms, swap " + swapMs
+                        + "ms, ft " + (ft / 1000) + "ms/" + (ft % 1000)
                         + ", subtex " + (subtex / 1000) + "ms/" + (subtex % 1000)
                         + ", stb " + (stb / 1000) + "ms/" + (stb % 1000)
                         + ", dxt " + (dxt / 1000) + "ms/" + (dxt % 1000)

@@ -251,14 +251,14 @@ void stsv_sound_resume(int source) {
     if (state == AL_PAUSED) alSourcePlay((ALuint) source);
 }
 
-/* ---- Music: streamed OGG (kept in memory, decoded in chunks) ---- */
+/* ---- Music: OGG decoded into a small queue of PCM chunks ---- */
 
 #define STSV_MUSIC_BUFFERS 4
 #define STSV_MUSIC_CHUNK   (16 * 1024)
 
 typedef struct {
     OggVorbis_File vf;
-    char *ogg;              /* owned copy of the encoded stream */
+    char *ogg;              /* optional owned stream for the legacy memory opener */
     stsv_ogg_mem mem;
     ALuint source;
     ALuint buffers[STSV_MUSIC_BUFFERS];
@@ -282,6 +282,28 @@ static long stsv_music_fill(stsv_music *m, char *buf) {
     return total;
 }
 
+static int64_t stsv_music_finish_open(stsv_music *m) {
+    vorbis_info *vi = ov_info(&m->vf, -1);
+    if (vi == NULL) {
+        ov_clear(&m->vf);
+        free(m->ogg);
+        free(m);
+        return 0;
+    }
+    m->format = (vi->channels == 1) ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
+    m->rate = (ALsizei) vi->rate;
+    alGenSources(1, &m->source);
+    alGenBuffers(STSV_MUSIC_BUFFERS, m->buffers);
+    char chunk[STSV_MUSIC_CHUNK];
+    for (int i = 0; i < STSV_MUSIC_BUFFERS; i++) {
+        long got = stsv_music_fill(m, chunk);
+        if (got <= 0) break;
+        alBufferData(m->buffers[i], m->format, chunk, (ALsizei) got, m->rate);
+        alSourceQueueBuffers(m->source, 1, &m->buffers[i]);
+    }
+    return (int64_t) (intptr_t) m;
+}
+
 int64_t stsv_music_open(const void *data, int len) {
     if (!g_ready || data == NULL || len <= 0) return 0;
     stsv_music *m = (stsv_music *) calloc(1, sizeof(stsv_music));
@@ -295,19 +317,25 @@ int64_t stsv_music_open(const void *data, int len) {
         free(m->ogg); free(m);
         return 0;
     }
-    vorbis_info *vi = ov_info(&m->vf, -1);
-    m->format = (vi->channels == 1) ? AL_FORMAT_MONO16 : AL_FORMAT_STEREO16;
-    m->rate = (ALsizei) vi->rate;
-    alGenSources(1, &m->source);
-    alGenBuffers(STSV_MUSIC_BUFFERS, m->buffers);
-    char chunk[STSV_MUSIC_CHUNK];
-    for (int i = 0; i < STSV_MUSIC_BUFFERS; i++) {
-        long got = stsv_music_fill(m, chunk);
-        if (got <= 0) break;
-        alBufferData(m->buffers[i], m->format, chunk, (ALsizei) got, m->rate);
-        alSourceQueueBuffers(m->source, 1, &m->buffers[i]);
+    return stsv_music_finish_open(m);
+}
+
+int64_t stsv_music_open_path(const void *path_utf8, int len) {
+    if (!g_ready || path_utf8 == NULL || len <= 0) return 0;
+    char *path = (char *) malloc((size_t) len + 1u);
+    if (path == NULL) return 0;
+    memcpy(path, path_utf8, (size_t) len);
+    path[len] = '\0';
+
+    stsv_music *m = (stsv_music *) calloc(1, sizeof(stsv_music));
+    if (m == NULL) { free(path); return 0; }
+    int opened = ov_fopen(path, &m->vf);
+    free(path);
+    if (opened != 0) {
+        free(m);
+        return 0;
     }
-    return (int64_t) (intptr_t) m;
+    return stsv_music_finish_open(m);
 }
 
 void stsv_music_update(int64_t handle) {

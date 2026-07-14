@@ -175,9 +175,6 @@ public class Gdx2DPixmap implements Disposable {
             livePixmaps--;
             totalDisposedBytes += pixelBytes;
             disposedPixmaps++;
-            if (pixelBytes >= 1024 * 1024) {
-                logStats("dispose", width, height, pixelBytes);
-            }
         }
     }
 
@@ -196,7 +193,6 @@ public class Gdx2DPixmap implements Disposable {
         }
         if (bytes >= 1024 * 1024) {
             largePixmaps++;
-            logStats("alloc", width, height, bytes);
         }
     }
 
@@ -216,28 +212,11 @@ public class Gdx2DPixmap implements Disposable {
         }
         if (bytes >= 1024 * 1024) {
             largePixmaps++;
-            logStats("alloc-dds", width, height, bytes);
         }
     }
 
     public static void dumpStats(String label) {
         System.err.println("[DIAG pixmap] summary " + label
-                + " live=" + kb(liveBytes) + "KB"
-                + " peak=" + kb(peakLiveBytes) + "KB"
-                + " livePixmaps=" + livePixmaps
-                + " peakPixmaps=" + peakLivePixmaps
-                + " totalPixmaps=" + totalPixmaps
-                + " disposed=" + disposedPixmaps
-                + " large=" + largePixmaps
-                + " compressed=" + compressedPixmaps
-                + " allocated=" + kb(totalAllocatedBytes) + "KB"
-                + " disposedBytes=" + kb(totalDisposedBytes) + "KB");
-    }
-
-    private static void logStats(String event, int width, int height, int bytes) {
-        System.err.println("[DIAG pixmap] " + event
-                + " " + width + "x" + height
-                + " bytes=" + kb(bytes) + "KB"
                 + " live=" + kb(liveBytes) + "KB"
                 + " peak=" + kb(peakLiveBytes) + "KB"
                 + " livePixmaps=" + livePixmaps

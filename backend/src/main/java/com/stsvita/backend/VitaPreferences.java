@@ -11,8 +11,8 @@ import java.util.Map;
  * writes — so a PC "preferences" folder (unlocks, settings, seen cards) can
  * be copied onto the Vita as-is.
  *
- * TeaVM classlib lacks java.util.Properties XML, so a small writer/parser of
- * the same format lives here instead.
+ * Serialization uses a small writer/parser because TeaVM lacks
+ * java.util.Properties XML.
  */
 public class VitaPreferences implements Preferences {
 

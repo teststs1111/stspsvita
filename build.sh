@@ -8,6 +8,7 @@ STS_DIR="${STS_DIR:-$ROOT/game}"
 LANGS="${LANGS:-eng}"
 AUDIO_KBPS="${AUDIO_KBPS:-0}"
 MODE="${BUILD_MODE:-slim}"
+CLEAN=0
 
 usage() {
     cat <<'USAGE'
@@ -19,6 +20,7 @@ Options:
   --audio-kbps N      Re-encode OGG audio at N kbps, default: 0 (copy)
   --slim              Build code-only VPK plus external assets, default
   --full              Bundle assets into the VPK
+  --clean             Remove previous generated output before building
   -h, --help          Show this help
 
 Environment variables are also supported:
@@ -60,6 +62,10 @@ while [[ $# -gt 0 ]]; do
             MODE="full"
             shift
             ;;
+        --clean)
+            CLEAN=1
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -95,12 +101,31 @@ if [[ "$MODE" == "full" ]]; then
     vpk="build/STSVITA.vpk"
 fi
 
+if [[ "$CLEAN" == "1" ]]; then
+    make clean
+fi
+
+echo "Build mode: $MODE"
+echo "Pipeline: verify -> extract -> assets -> livearea -> transpile -> native"
+echo "Command: make $target STS_DIR=$STS_DIR LANGS=$LANGS AUDIO_KBPS=$AUDIO_KBPS"
+echo
+
 make "$target" STS_DIR="$STS_DIR" LANGS="$LANGS" AUDIO_KBPS="$AUDIO_KBPS"
+
+[[ -f "$vpk" ]] || die "build completed without producing $vpk"
+[[ -d work/assets_vita ]] || die "build completed without producing work/assets_vita"
+
+asset_count="$(find work/assets_vita -type f | wc -l | tr -d '[:space:]')"
+dds_count="$(find work/assets_vita -type f -name '*.dds' | wc -l | tr -d '[:space:]')"
+fallback_count="$(find work/assets_vita -type f \( -name '*.png' -o -name '*.jpg' \) | wc -l | tr -d '[:space:]')"
+audio_count="$(find work/assets_vita -type f \( -name '*.ogg' -o -name '*.wav' \) | wc -l | tr -d '[:space:]')"
 
 echo
 echo "Build complete."
 echo "VPK: $vpk"
+echo "Assets: work/assets_vita ($asset_count files)"
+echo "Textures: $dds_count DDS, $fallback_count PNG/JPG fallbacks"
+echo "Audio: $audio_count OGG/WAV files"
 if [[ "$MODE" == "slim" ]]; then
-    echo "Assets: work/assets_vita"
     echo "Copy work/assets_vita contents to ux0:data/stsvita/assets/ on the Vita."
 fi

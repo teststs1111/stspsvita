@@ -133,7 +133,7 @@ missing VitaSDK package, then rerun the build.
 Clone the repo and copy in your game jar:
 
 ```sh
-git clone <repo-url> stspsvita
+git clone https://github.com/mmrmagno/stspsvita.git
 cd stspsvita
 
 mkdir -p game
@@ -152,6 +152,30 @@ Build:
 ./build.sh
 ```
 
+For a completely fresh rebuild:
+
+```sh
+./build.sh --clean
+```
+
+`build.sh` is a dependency-checking wrapper around the same Make targets used
+during development. The default command invokes:
+
+```sh
+make vpk-slim STS_DIR=game LANGS=eng AUDIO_KBPS=0
+```
+
+The Make dependency chain is:
+
+```text
+verify -> extract -> assets -> livearea -> transpile -> native
+```
+
+`AUDIO_KBPS=0` copies the original OGG/WAV audio without re-encoding. DDS
+generation, half-resolution texture selection, PNG/JPG fallback retention,
+LiveArea generation, TeaVM transpilation, Vita runtime patching, and native VPK
+packaging are all performed by this chain.
+
 Default output:
 
 - `build/STSVITA-slim.vpk`
@@ -165,6 +189,8 @@ Copy the contents of `work/assets_vita/` to:
 ux0:data/stsvita/assets/
 ```
 
+Copy the contents, not the `assets_vita` directory itself.
+
 The final layout should look like:
 
 ```text
@@ -177,6 +203,14 @@ You can also upload the assets over VitaShell FTP:
 
 ```sh
 make deploy-assets VITA_IP=<your-vita-ip>
+```
+
+For Vita3K, replace its existing asset directory so stale files cannot survive:
+
+```sh
+VITA3K_UX0="$HOME/.local/share/Vita3K/Vita3K/ux0"
+mkdir -p "$VITA3K_UX0/data/stsvita/assets"
+rsync -a --delete work/assets_vita/ "$VITA3K_UX0/data/stsvita/assets/"
 ```
 
 ## Build Options
@@ -213,17 +247,27 @@ Run `./build.sh --help` for all script flags.
 
 ## Manual Make Targets
 
-The script wraps these make targets:
+The one-command equivalents are:
 
 ```sh
-make verify STS_DIR=game
-make assets STS_DIR=game
 make vpk-slim STS_DIR=game
 make vpk STS_DIR=game
 ```
 
-Generated output is written to `work/` and `build/`. Those folders are ignored
-by git and should not be distributed.
+For pipeline debugging, the stages can also be run directly:
+
+```sh
+make verify STS_DIR=game
+make extract STS_DIR=game
+make assets STS_DIR=game
+make livearea STS_DIR=game
+make transpile
+make native BUNDLE_ASSETS=OFF
+```
+
+`extract`, `assets`, and `livearea` declare their prerequisites, so invoking
+a later target may rerun earlier stages. Generated output is written to `work/`
+and `build/`; both directories are ignored by git and must not be distributed.
 
 ## Troubleshooting
 
@@ -248,6 +292,15 @@ Install ImageMagick:
 ```sh
 sudo apt install -y imagemagick
 ```
+
+Vita3K reports many missing `.dds` files
+
+This is expected when the next log line opens the same path as `.png` or
+`.jpg`. The asset pipeline only keeps DDS when compression is useful or
+required; other images intentionally remain in their original format. A real
+asset-copy problem is when both the DDS probe and its PNG/JPG fallback are
+missing. Recopy the complete asset tree with the `rsync --delete` command
+above.
 
 TeaVM or Gradle runs out of memory
 

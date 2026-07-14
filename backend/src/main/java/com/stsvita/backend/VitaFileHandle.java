@@ -15,6 +15,8 @@ import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * FileHandle whose path is already resolved to a Vita mount
@@ -23,8 +25,8 @@ import java.io.OutputStream;
  */
 public class VitaFileHandle extends FileHandle {
 
-    // Per-frame IO attribution: the [io] >=100ms line can miss long tails of
-    // sub-100ms reads/stats.
+    // Per-frame IO attribution: single-read logging misses long tails of
+    // sub-100ms reads/stats during stalls.
     // Every read and every stat-ish call accumulates here; the [hitch] logger
     // drains once per frame. Packed like the native accumulators:
     // ms*1000 + count (count capped 999).
@@ -32,6 +34,7 @@ public class VitaFileHandle extends FileHandle {
     private static int ioCount;
     private static long statUs;
     private static int statCount;
+    private static final Map<String, byte[]> doomedDdsHeaders = new HashMap<>();
 
     public static long drainIoStats() {
         long packed = (ioUs / 1000L) * 1000L + Math.min(ioCount, 999);
@@ -104,8 +107,8 @@ public class VitaFileHandle extends FileHandle {
                 return headerOnly;
             }
         }
-        // Synchronous multi-MB SD reads (music, event art) stall the frame loop
-        // under cooperative fibers.
+        // Synchronous multi-MB SD reads (music, event art) can stall the
+        // frame loop under cooperative fibers.
         long t0 = System.nanoTime();
         byte[] bytes = readAll(read(), (int) length());
         long us = (System.nanoTime() - t0) / 1000L;
@@ -144,6 +147,11 @@ public class VitaFileHandle extends FileHandle {
         if (VitaNatives.texWouldFit((int) payload) != 0) {
             return null;
         }
+        String cacheKey = f.getPath();
+        byte[] cached = doomedDdsHeaders.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         try {
             InputStream in = new FileInputStream(f);
             try {
@@ -159,6 +167,7 @@ public class VitaFileHandle extends FileHandle {
                 if (total < 128) {
                     return null;
                 }
+                doomedDdsHeaders.put(cacheKey, header);
                 System.out.println("[io] skip-drop " + path() + " " + payload + "B");
                 return header;
             } finally {
@@ -363,8 +372,7 @@ public class VitaFileHandle extends FileHandle {
             // Exact-size fast path: the estimate is the stat'd file length, so
             // read straight into the result array. The old BAOS route (chunk
             // buffer + growth doublings + toByteArray copy) allocated 2-3x the
-            // file size in garbage — its 256KB/4MB allocations were the main
-            // young-GC triggers in the 2026-07-12 device log ([gc] req=).
+            // file size in garbage.
             if (estimatedSize > 0) {
                 byte[] out = new byte[estimatedSize];
                 int total = 0;

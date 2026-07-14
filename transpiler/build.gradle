@@ -51,8 +51,7 @@ tasks.register('typeManifest', Exec) {
 compileJava.dependsOn 'typeManifest'
 processResources.dependsOn 'typeManifest'
 
-// TeaVM version is pinned: the C backend moves fast and the runtime patcher
-// targets this release.
+// TeaVM version is pinned because the C backend moves quickly.
 def teavmVersion = '0.15.0'
 
 dependencies {

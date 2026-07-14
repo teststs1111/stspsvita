@@ -37,7 +37,7 @@ int64_t stsv_wall_us(void) {
 #include "../../third_party/stb_image.h"
 
 /* Per-frame stb decode time, polled by the [hitch] logger like the
- * ft/subtex accumulators. */
+ * ft/subtex accumulators for frame-drop attribution. */
 static int64_t stsv_img_us_accum;
 static int32_t stsv_img_calls_accum;
 
