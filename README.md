@@ -172,9 +172,11 @@ verify -> extract -> assets -> livearea -> transpile -> native
 ```
 
 `AUDIO_KBPS=0` copies the original OGG/WAV audio without re-encoding. DDS
-generation, half-resolution texture selection, PNG/JPG fallback retention,
+generation, half-resolution texture selection, PNG/JPG fallback handling,
 LiveArea generation, TeaVM transpilation, Vita runtime patching, and native VPK
-packaging are all performed by this chain.
+packaging are all performed by this chain. When a valid DDS is generated, its
+source PNG/JPG is removed from the processed payload; images that are not good
+DDS candidates remain in their original format.
 
 Default output:
 
@@ -182,6 +184,9 @@ Default output:
 - `work/assets_vita/`
 
 Install `build/STSVITA-slim.vpk` with VitaShell.
+
+Always install the VPK and `work/assets_vita/` produced by the same clean
+build. After updating the port, do not reuse an older processed asset folder.
 
 Copy the contents of `work/assets_vita/` to:
 
@@ -300,7 +305,9 @@ This is expected when the next log line opens the same path as `.png` or
 required; other images intentionally remain in their original format. A real
 asset-copy problem is when both the DDS probe and its PNG/JPG fallback are
 missing. Recopy the complete asset tree with the `rsync --delete` command
-above.
+above. If card art, UI textures, or effects are blank, run `./build.sh --clean`
+and replace both the installed VPK and the complete asset directory; that is
+not an expected fallback-only condition.
 
 TeaVM or Gradle runs out of memory
 
