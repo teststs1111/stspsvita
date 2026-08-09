@@ -499,8 +499,6 @@ or install the missing package through VitaSDK's package manager.
 | `transpiler/` | TeaVM AOT harness and Vita launcher. |
 | `native/` | Vita C entrypoint, glue, CMake build, and packaging. |
 | `tools/` | Build helper tools, asset FTP upload, and PC progress import. |
-| `teavm-patches/` | TeaVM runtime patch notes for the Vita target. |
-| `docs/` | Architecture, feasibility research, and roadmap. |
 
 ## Legal
 
