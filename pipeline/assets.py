@@ -26,31 +26,77 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from stsvita_common import CJK_FONT_DIRS, DEFAULT_LANGS, sha256_file
 
 
+# libvorbis refuses managed bitrates below ~45kbps at 44.1kHz stereo
+# ("encoder setup failed"). The
+# 32kbps profile therefore resamples to 24kHz, which the encoder accepts
+# and which also halves the decoded PCM size of every preloaded SFX in
+# OpenAL's native-heap buffers. 48kbps stays at the source rate.
+VORBIS_RATE_FLOOR_KBPS = ((44100, 45), (32000, 36), (24000, 30), (16000, 24))
+MIN_AUDIO_KBPS = VORBIS_RATE_FLOOR_KBPS[-1][1]
+
+
+def encode_args(kbps: int) -> list[str]:
+    args = ["-c:a", "libvorbis"]
+    for rate, floor in VORBIS_RATE_FLOOR_KBPS:
+        if kbps >= floor:
+            if rate != VORBIS_RATE_FLOOR_KBPS[0][0]:
+                args += ["-ar", str(rate)]
+            break
+    return args + ["-b:a", f"{kbps}k"]
+
+
+def check_audio_encoder(kbps: int) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        probe = Path(td) / "probe.ogg"
+        res = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+             "-i", "sine=f=440:d=0.2:r=44100", "-ac", "2"]
+            + encode_args(kbps) + [str(probe)],
+            capture_output=True, text=True)
+        if res.returncode != 0 or not probe.is_file() or probe.stat().st_size == 0:
+            raise RuntimeError(
+                f"ffmpeg cannot encode vorbis at {kbps}kbps:\n"
+                f"{(res.stderr or res.stdout).strip()}\n"
+                f"Install an ffmpeg built with --enable-libvorbis, or rebuild "
+                f"with --audio-kbps 0 to copy the original audio through."
+            )
+
+
 def reencode_ogg(src: Path, dst: Path, kbps: int) -> None:
     tmp = dst.with_name(f".{dst.name}.stsvita-tmp.ogg")
-    # libvorbis refuses managed bitrates below ~45kbps at 44.1kHz stereo
-    # ("encoder setup failed"). The
-    # 32kbps profile therefore resamples to 24kHz, which the encoder accepts
-    # and which also halves the decoded PCM size of every preloaded SFX in
-    # OpenAL's native-heap buffers. 48kbps stays at the source rate.
-    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src), "-c:a", "libvorbis"]
-    if kbps <= 32:
-        cmd += ["-ar", "24000"]
-    cmd += ["-b:a", f"{kbps}k", str(tmp)]
+    cmd = (["ffmpeg", "-y", "-v", "error", "-i", str(src)]
+           + encode_args(kbps) + [str(tmp)])
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0 or not tmp.is_file() or tmp.stat().st_size == 0:
         tmp.unlink(missing_ok=True)
-        detail = res.stderr.strip().splitlines()[-1] if res.stderr else "no output"
+        detail = (res.stderr or res.stdout).strip() or "no output"
         raise RuntimeError(
-            f"ffmpeg failed to encode {src} at {kbps}kbps: {detail}"
+            f"ffmpeg failed to encode {src} at {kbps}kbps (exit "
+            f"{res.returncode}):\n{detail}"
         )
     tmp.replace(dst)
+
+
+def run_audio_jobs(jobs: list[tuple[Path, Path]], kbps: int,
+                   workers: int) -> list[tuple[Path, str]]:
+    def one(job: tuple[Path, Path]) -> tuple[Path, str] | None:
+        src, dst = job
+        try:
+            reencode_ogg(src, dst, kbps)
+            return None
+        except (RuntimeError, OSError) as exc:
+            shutil.copy2(src, dst)
+            return (src, str(exc))
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return [r for r in ex.map(one, jobs) if r is not None]
 
 
 def build_dds_encoder(work: Path) -> Path:
@@ -321,8 +367,17 @@ def main() -> int:
     langs = {l.strip() for l in args.langs.split(",") if l.strip()}
     dropped_font_dirs = CJK_FONT_DIRS - langs
 
-    if args.audio_kbps and not shutil.which("ffmpeg"):
-        sys.exit("error: --audio-kbps needs ffmpeg on PATH")
+    if args.audio_kbps:
+        if args.audio_kbps < MIN_AUDIO_KBPS:
+            sys.exit(f"error: --audio-kbps {args.audio_kbps} is below the "
+                     f"lowest bitrate libvorbis will encode "
+                     f"({MIN_AUDIO_KBPS}); use 0 to copy audio unchanged")
+        if not shutil.which("ffmpeg"):
+            sys.exit("error: --audio-kbps needs ffmpeg on PATH")
+        try:
+            check_audio_encoder(args.audio_kbps)
+        except RuntimeError as exc:
+            print(f"WARNING: {exc}")
 
     copied = dropped = 0
     audio_jobs = []
@@ -344,9 +399,14 @@ def main() -> int:
             shutil.copy2(src, dst)
         copied += 1
 
+    audio_failed = []
     if audio_jobs:
-        with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-            list(ex.map(lambda p: reencode_ogg(*p, args.audio_kbps), audio_jobs))
+        audio_failed = run_audio_jobs(audio_jobs, args.audio_kbps, args.jobs)
+        for src, detail in audio_failed:
+            print(f"WARNING: kept original audio for {src}: {detail}")
+        if audio_failed:
+            print(f"audio: {len(audio_failed)} of {len(audio_jobs)} OGGs could "
+                  f"not be re-encoded and were copied unchanged")
 
     if not shutil.which("magick"):
         sys.exit("error: NPOT atlas-page padding needs ImageMagick on PATH")
