@@ -1,0 +1,35 @@
+name: Host-side checks
+
+on:
+  push:
+    branches:
+      - main
+      - "optimization/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check build script syntax
+        run: bash -n build.sh
+
+      - name: Check build help
+        run: ./build.sh --help
+
+      - name: Run host-side tests
+        run: make test
