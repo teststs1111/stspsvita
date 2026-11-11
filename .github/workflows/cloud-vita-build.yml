@@ -1,0 +1,114 @@
+name: Temporary cloud Vita build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - optimization/baseline-profiling
+    paths:
+      - ".github/workflows/cloud-vita-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: temporary-vita-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out optimization branch
+        uses: actions/checkout@v4
+        with:
+          ref: optimization/baseline-profiling
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git make cmake python3 python3-pip             imagemagick ffmpeg unzip zip wget ca-certificates curl jq pkg-config             libjpeg-dev libpng-dev libtiff-dev libwebp-dev libfreetype6-dev
+
+          # The project requires ImageMagick 7's "magick" command. Ubuntu 24.04
+          # ships ImageMagick 6; this compatibility launcher maps the used CLI
+          # entry point to its convert frontend.
+          if ! command -v magick >/dev/null 2>&1; then
+            printf '#!/bin/sh\nexec /usr/bin/convert "$@"\n' | sudo tee /usr/local/bin/magick >/dev/null
+            sudo chmod +x /usr/local/bin/magick
+          fi
+          python3 --version
+          java -version
+          gradle --version
+          magick -version
+          ffmpeg -version
+
+      - name: Install VitaSDK
+        run: |
+          git clone --depth 1 https://github.com/vitasdk/vdpm.git "$RUNNER_TEMP/vdpm"
+          sudo mkdir -p /usr/local/vitasdk
+          sudo chown "$USER:$USER" /usr/local/vitasdk
+          cd "$RUNNER_TEMP/vdpm"
+          export VITASDK=/usr/local/vitasdk
+          export PATH="$VITASDK/bin:$PATH"
+          ./bootstrap-vitasdk.sh
+          ./install-all.sh
+          echo "VITASDK=/usr/local/vitasdk" >> "$GITHUB_ENV"
+          echo "/usr/local/vitasdk/bin" >> "$GITHUB_PATH"
+          arm-vita-eabi-gcc --version
+
+      - name: Download private game input from temporary Release
+        env:
+          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/sts-input"
+          release_json="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $STS_BUILD_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/tags/temp-build-1)"
+          asset_id="$(printf '%s' "$release_json" | jq -r '.assets[] | select(.name=="desktop-1.0.jar") | .id' | head -n1)"
+          test -n "$asset_id" && test "$asset_id" != "null" || { echo "desktop-1.0.jar was not found in temp-build-1"; exit 1; }
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $STS_BUILD_TOKEN" \
+            -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/assets/$asset_id" \
+            -o "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
+          test -s "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
+          sha256sum "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
+
+      - name: Build VPK packages
+        run: |
+          set -euo pipefail
+          ./build.sh --sts-jar "$RUNNER_TEMP/sts-input/desktop-1.0.jar" --audio-kbps 0
+          test -s build/STSVITA.vpk
+          test -s build/STSVITA-slim.vpk
+          ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk
+
+      - name: Upload temporary VPK outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: STSVITA-temporary-build
+          path: |
+            build/STSVITA.vpk
+            build/STSVITA-slim.vpk
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Remove game input and generated game-derived files
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/sts-input"
+          rm -rf work/assets_raw work/assets_vita work/gen work/generated_c work/jar_path.txt
+          rm -rf work/assets-vita-metadata.json work/sce_sys build transpiler/build transpiler/.gradle
