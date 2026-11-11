@@ -1,0 +1,58 @@
+name: Local Vita VPK build
+
+on:
+  workflow_dispatch:
+    inputs:
+      sts_dir:
+        description: "Path to the legally installed Slay the Spire directory on the runner PC"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-vpk:
+    if: github.ref == 'refs/heads/optimization/baseline-profiling'
+    runs-on: [self-hosted, linux, x64, vita-build]
+    timeout-minutes: 180
+    steps:
+      - name: Check out optimization branch
+        uses: actions/checkout@v4
+        with:
+          ref: optimization/baseline-profiling
+          persist-credentials: false
+
+      - name: Validate local game directory
+        env:
+          STS_DIR: ${{ inputs.sts_dir }}
+        run: |
+          set -euo pipefail
+          test -d "$STS_DIR" || { echo "::error::Game directory does not exist on this runner"; exit 2; }
+          printf 'Using local game directory: %s\n' "$STS_DIR"
+
+      - name: Validate Vita build toolchain
+        run: |
+          set -euo pipefail
+          test -n "${VITASDK:-}" || { echo "::error::VITASDK is not configured in the runner service environment"; exit 2; }
+          test -f "$VITASDK/share/vita.toolchain.cmake"
+          for cmd in make python3 java gradle cmake magick arm-vita-eabi-gcc ffmpeg; do
+            command -v "$cmd" >/dev/null || { echo "::error::Missing required command: $cmd"; exit 2; }
+          done
+
+      - name: Build and validate full and slim VPKs locally
+        env:
+          STS_DIR: ${{ inputs.sts_dir }}
+        run: |
+          set -euo pipefail
+          bash -n build.sh
+          ./build.sh --sts-dir "$STS_DIR"
+          test -s build/STSVITA.vpk
+          test -s build/STSVITA-slim.vpk
+          ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk
+          {
+            echo "VPK build completed on the self-hosted runner."
+            echo "Full VPK: $GITHUB_WORKSPACE/build/STSVITA.vpk"
+            echo "Slim VPK: $GITHUB_WORKSPACE/build/STSVITA-slim.vpk"
+            echo "The VPKs and game-derived assets remain on this PC; they are not uploaded as workflow artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
