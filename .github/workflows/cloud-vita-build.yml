@@ -64,6 +64,9 @@ jobs:
           test -x "$VITASDK/bin/pacman"
           # vdpm supports unattended package installation through this flag.
           export VDPM_NONINTERACTIVE=1
+          # VitaSDK core already provides openssl 1.1.1; the legacy vdpm
+          # openssl package (1.0.2) conflicts and is not linked by this project.
+          sed -i '/^[[:space:]]*openssl[[:space:]]*$/d' include/install-packages.sh
           ./install-all.sh
           echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/vitasdk/bin" >> "$GITHUB_PATH"
