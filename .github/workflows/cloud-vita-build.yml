@@ -62,6 +62,8 @@ jobs:
             ln -s "$VITASDK/libexec/vdpm/pacman" "$VITASDK/bin/pacman"
           fi
           test -x "$VITASDK/bin/pacman"
+          # vdpm supports unattended package installation through this flag.
+          export VDPM_NONINTERACTIVE=1
           ./install-all.sh
           echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/vitasdk/bin" >> "$GITHUB_PATH"
