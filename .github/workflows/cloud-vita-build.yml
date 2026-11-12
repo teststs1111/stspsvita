@@ -38,8 +38,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential git make cmake python3 python3-pip imagemagick ffmpeg unzip zip wget ca-certificates curl jq pkg-config libjpeg-dev libpng-dev libtiff-dev libwebp-dev libfreetype6-dev
-
-          # Ubuntu 24.04 ships ImageMagick 6; provide the CLI name expected by the build.
           if ! command -v magick >/dev/null 2>&1; then
             printf '#!/bin/sh\nexec /usr/bin/convert "$@"\n' | sudo tee /usr/local/bin/magick >/dev/null
             sudo chmod +x /usr/local/bin/magick
@@ -55,10 +53,15 @@ jobs:
           set -euo pipefail
           git clone --depth 1 https://github.com/vitasdk/vdpm.git "$RUNNER_TEMP/vdpm"
           cd "$RUNNER_TEMP/vdpm"
-          # bootstrap-vitasdk.sh refuses an already-existing install directory.
           export VITASDK="$RUNNER_TEMP/vitasdk"
           export PATH="$VITASDK/bin:$PATH"
           ./bootstrap-vitasdk.sh
+          # The current bootstrap places pacman under libexec; vdpm invokes
+          # the conventional bin/pacman path while installing the package set.
+          if [ ! -x "$VITASDK/bin/pacman" ] && [ -x "$VITASDK/libexec/vdpm/pacman" ]; then
+            ln -s "$VITASDK/libexec/vdpm/pacman" "$VITASDK/bin/pacman"
+          fi
+          test -x "$VITASDK/bin/pacman"
           ./install-all.sh
           echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/vitasdk/bin" >> "$GITHUB_PATH"
