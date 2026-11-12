@@ -106,12 +106,13 @@ deploy-assets:
 # they need Python 3 and JDK 17+, but no game jar, VitaSDK or device.
 test:
 	$(PY) -m unittest discover -s tools -p 'test_*.py' -v
-	@test_dir=$(mktemp -d); \
-	  trap 'rm -rf "$test_dir"' EXIT; \
-	  javac -d "$test_dir" \
+	@set -eu; \
+	  trap 'rm -rf build/frame-pacing-test' EXIT; \
+	  mkdir -p build/frame-pacing-test; \
+	  javac -d build/frame-pacing-test \
 	    backend/src/main/java/com/stsvita/backend/FramePacingStats.java \
 	    backend/src/test/java/com/stsvita/backend/FramePacingStatsTest.java; \
-	  java -cp "$test_dir" com.stsvita.backend.FramePacingStatsTest
+	  java -cp build/frame-pacing-test com.stsvita.backend.FramePacingStatsTest
 
 # Reproducible clean. All game-derived and generated build trees are reset;
 # anything else under work/ is left alone.
