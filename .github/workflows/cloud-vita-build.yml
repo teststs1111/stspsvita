@@ -103,6 +103,12 @@ jobs:
           fi
           test -s "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
           sha256sum "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
+          # Verify that the downloaded file is a readable Java archive before
+          # passing it to the Vita asset/transpilation build.
+          jar tf "$RUNNER_TEMP/sts-input/desktop-1.0.jar" > "$RUNNER_TEMP/sts-input/jar-entries.txt"
+          test -s "$RUNNER_TEMP/sts-input/jar-entries.txt"
+          echo "JAR archive listing (first 20 entries):"
+          sed -n '1,20p' "$RUNNER_TEMP/sts-input/jar-entries.txt"
 
       - name: Build VPK packages
         run: |
