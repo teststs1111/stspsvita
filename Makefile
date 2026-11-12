@@ -102,10 +102,16 @@ deploy-assets:
 	$(PY) tools/deploy_assets.py --src $(WORK)/assets_vita \
 	  --host $(VITA_IP) --dest ux0:/data/stsvita/assets
 
-# Host-side tool tests. Synthetic fixtures only, never the game's own data,
-# so this needs no jar, no VitaSDK and no device.
+# Host-side tests use synthetic fixtures and a pure-Java timing helper;
+# they need Python 3 and JDK 17+, but no game jar, VitaSDK or device.
 test:
 	$(PY) -m unittest discover -s tools -p 'test_*.py' -v
+	@test_dir=$(mktemp -d); \
+	  trap 'rm -rf "$test_dir"' EXIT; \
+	  javac -d "$test_dir" \
+	    backend/src/main/java/com/stsvita/backend/FramePacingStats.java \
+	    backend/src/test/java/com/stsvita/backend/FramePacingStatsTest.java; \
+	  java -cp "$test_dir" com.stsvita.backend.FramePacingStatsTest
 
 # Reproducible clean. All game-derived and generated build trees are reset;
 # anything else under work/ is left alone.

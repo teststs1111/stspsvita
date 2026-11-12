@@ -79,6 +79,10 @@ public class VitaApplication implements Application {
         // loads the player actually sees (boss atlases, scene backgrounds).
         VitaNatives.texSpillEnable();
 
+        // The [hitch] trace below is intentionally reserved for >200ms stalls.
+        // Track a five-second frame-time distribution as well, so ordinary
+        // 16-100ms pacing misses are visible without logging every frame.
+        FramePacingStats framePacing = new FramePacingStats(VitaNatives.micros());
         while (running) {
             long hitchStart = VitaNatives.micros();
             long wallStart = VitaNatives.wallMicros();
@@ -91,7 +95,12 @@ public class VitaApplication implements Application {
             long swapStart = VitaNatives.micros();
             graphics.endFrame(); // swap + vsync + frame timing
             long frameEnd = VitaNatives.micros();
-            long frameMs = (frameEnd - hitchStart) / 1000L;
+            long frameDurationMicros = frameEnd - hitchStart;
+            framePacing.record(frameDurationMicros);
+            if (framePacing.shouldReport(frameEnd)) {
+                VitaNatives.log(framePacing.reportAndReset(frameEnd));
+            }
+            long frameMs = frameDurationMicros / 1000L;
             long preMs = (gameStart - hitchStart) / 1000L;
             long gameMs = (swapStart - gameStart) / 1000L;
             long swapMs = (frameEnd - swapStart) / 1000L;
