@@ -79,17 +79,28 @@ jobs:
           set -euo pipefail
           test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
           mkdir -p "$RUNNER_TEMP/sts-input"
-          release_json="$(curl --fail --silent --show-error \
+          release_status="$(curl --silent --show-error \
+            -o "$RUNNER_TEMP/sts-input/release.json" -w '%{http_code}' \
             -H "Authorization: Bearer $STS_BUILD_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/tags/temp-build-1)"
-          asset_id="$(printf '%s' "$release_json" | jq -r '.assets[] | select(.name=="desktop-1.0.jar") | .id' | head -n1)"
-          test -n "$asset_id" && test "$asset_id" != "null" || { echo "desktop-1.0.jar was not found in temp-build-1"; exit 1; }
-          curl --fail --location --silent --show-error \
+          if [ "$release_status" != "200" ]; then
+            echo "Private Release API returned HTTP $release_status"
+            jq -r '.message // "No API error message returned"' "$RUNNER_TEMP/sts-input/release.json"
+            exit 1
+          fi
+          asset_id="$(jq -r '.assets[] | select(.name=="desktop-1.0.jar") | .id' "$RUNNER_TEMP/sts-input/release.json" | head -n1)"
+          test -n "$asset_id" && test "$asset_id" != "null" || { echo "desktop-1.0.jar was not found in temp-build-1"; jq -r '.assets[]?.name' "$RUNNER_TEMP/sts-input/release.json"; exit 1; }
+          asset_status="$(curl --location --silent --show-error \
+            -o "$RUNNER_TEMP/sts-input/desktop-1.0.jar" -w '%{http_code}' \
             -H "Authorization: Bearer $STS_BUILD_TOKEN" \
             -H "Accept: application/octet-stream" \
-            "https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/assets/$asset_id" \
-            -o "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
+            "https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/assets/$asset_id")"
+          if [ "$asset_status" != "200" ]; then
+            echo "Private Release asset API returned HTTP $asset_status"
+            jq -r '.message // "No API error message returned"' "$RUNNER_TEMP/sts-input/desktop-1.0.jar" 2>/dev/null || true
+            exit 1
+          fi
           test -s "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
           sha256sum "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
 
