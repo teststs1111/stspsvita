@@ -4,9 +4,9 @@ package com.stsvita.backend;
  * Low-overhead frame-time distribution for diagnosing ordinary frame pacing.
  *
  * The existing [hitch] log is deliberately limited to frames over 200ms.
- * This accumulator records one primitive counter per frame and formats a
- * single summary every five seconds, exposing missed 60Hz frames without
- * allocating or writing to storage in the render hot path.
+ * This accumulator records primitive counters per frame and formats a single
+ * summary every five seconds. Phase averages/maxima distinguish pre-render
+ * work, game rendering, and swap/vsync waiting without per-frame logging.
  */
 final class FramePacingStats {
 
@@ -16,6 +16,12 @@ final class FramePacingStats {
     private long frameCount;
     private long totalFrameMicros;
     private long maxFrameMicros;
+    private long preTotalMicros;
+    private long preMaxMicros;
+    private long gameTotalMicros;
+    private long gameMaxMicros;
+    private long swapTotalMicros;
+    private long swapMaxMicros;
     private long le16_7ms;
     private long le20ms;
     private long le25ms;
@@ -28,7 +34,7 @@ final class FramePacingStats {
         this.windowStartMicros = windowStartMicros;
     }
 
-    void record(long frameMicros) {
+    void record(long frameMicros, long preMicros, long gameMicros, long swapMicros) {
         if (frameMicros < 0) {
             return;
         }
@@ -36,6 +42,19 @@ final class FramePacingStats {
         totalFrameMicros += frameMicros;
         if (frameMicros > maxFrameMicros) {
             maxFrameMicros = frameMicros;
+        }
+
+        preTotalMicros += preMicros;
+        if (preMicros > preMaxMicros) {
+            preMaxMicros = preMicros;
+        }
+        gameTotalMicros += gameMicros;
+        if (gameMicros > gameMaxMicros) {
+            gameMaxMicros = gameMicros;
+        }
+        swapTotalMicros += swapMicros;
+        if (swapMicros > swapMaxMicros) {
+            swapMaxMicros = swapMicros;
         }
 
         if (frameMicros <= 16_667L) {
@@ -62,7 +81,10 @@ final class FramePacingStats {
     String reportAndReset(long nowMicros) {
         long elapsedMicros = nowMicros - windowStartMicros;
         long averageMicros = frameCount == 0 ? 0 : totalFrameMicros / frameCount;
-        StringBuilder report = new StringBuilder(176);
+        long preAverageMicros = frameCount == 0 ? 0 : preTotalMicros / frameCount;
+        long gameAverageMicros = frameCount == 0 ? 0 : gameTotalMicros / frameCount;
+        long swapAverageMicros = frameCount == 0 ? 0 : swapTotalMicros / frameCount;
+        StringBuilder report = new StringBuilder(280);
         report.append("[frame-pacing] window=")
                 .append(elapsedMicros / 1000L)
                 .append("ms frames=")
@@ -77,12 +99,30 @@ final class FramePacingStats {
                 .append(" <=33.3ms=").append(le33_3ms)
                 .append(" <=50ms=").append(le50ms)
                 .append(" <=100ms=").append(le100ms)
-                .append(" >100ms=").append(over100ms);
+                .append(" >100ms=").append(over100ms)
+                .append(" pre_avg=");
+        appendMillis(report, preAverageMicros);
+        report.append(" pre_max=");
+        appendMillis(report, preMaxMicros);
+        report.append(" game_avg=");
+        appendMillis(report, gameAverageMicros);
+        report.append(" game_max=");
+        appendMillis(report, gameMaxMicros);
+        report.append(" swap_avg=");
+        appendMillis(report, swapAverageMicros);
+        report.append(" swap_max=");
+        appendMillis(report, swapMaxMicros);
 
         windowStartMicros = nowMicros;
         frameCount = 0;
         totalFrameMicros = 0;
         maxFrameMicros = 0;
+        preTotalMicros = 0;
+        preMaxMicros = 0;
+        gameTotalMicros = 0;
+        gameMaxMicros = 0;
+        swapTotalMicros = 0;
+        swapMaxMicros = 0;
         le16_7ms = 0;
         le20ms = 0;
         le25ms = 0;

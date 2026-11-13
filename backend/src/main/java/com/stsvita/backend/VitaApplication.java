@@ -80,8 +80,8 @@ public class VitaApplication implements Application {
         VitaNatives.texSpillEnable();
 
         // The [hitch] trace below is intentionally reserved for >200ms stalls.
-        // Track a five-second frame-time distribution as well, so ordinary
-        // 16-100ms pacing misses are visible without logging every frame.
+        // Track a five-second frame-time distribution and phase averages/maxima.
+        // This makes sub-200ms pacing misses attributable without per-frame logs.
         FramePacingStats framePacing = new FramePacingStats(VitaNatives.micros());
         while (running) {
             long hitchStart = VitaNatives.micros();
@@ -96,14 +96,17 @@ public class VitaApplication implements Application {
             graphics.endFrame(); // swap + vsync + frame timing
             long frameEnd = VitaNatives.micros();
             long frameDurationMicros = frameEnd - hitchStart;
-            framePacing.record(frameDurationMicros);
+            long preMicros = gameStart - hitchStart;
+            long gameMicros = swapStart - gameStart;
+            long swapMicros = frameEnd - swapStart;
+            framePacing.record(frameDurationMicros, preMicros, gameMicros, swapMicros);
             if (framePacing.shouldReport(frameEnd)) {
                 VitaNatives.log(framePacing.reportAndReset(frameEnd));
             }
             long frameMs = frameDurationMicros / 1000L;
-            long preMs = (gameStart - hitchStart) / 1000L;
-            long gameMs = (swapStart - gameStart) / 1000L;
-            long swapMs = (frameEnd - swapStart) / 1000L;
+            long preMs = preMicros / 1000L;
+            long gameMs = gameMicros / 1000L;
+            long swapMs = swapMicros / 1000L;
             long ft = VitaNatives.ftFrameStats();       // reset every frame so
             long subtex = VitaNatives.subtexFrameStats(); // hitches attribute
             long stb = VitaNatives.imgFrameStats();
