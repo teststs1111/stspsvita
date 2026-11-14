@@ -78,8 +78,8 @@ void *stsv_img_load(const void *data, int32_t len, int32_t *outDims) {
             (int) (vglMemTotal(VGL_MEM_VRAM) >> 20),
             (int) ((vglMemTotal(VGL_MEM_RAM) - vglMemFree(VGL_MEM_RAM)) >> 20),
             (int) (vglMemTotal(VGL_MEM_RAM) >> 20),
-            (int) ((vglMemTotal(VGL_MEM_SLOW) - vglMemFree(VGL_MEM_SLOW)) >> 20),
-            (int) (vglMemTotal(VGL_MEM_SLOW) >> 20),
+            (int) ((vglMemTotal(VGL_MEM_PHYCONT) - vglMemFree(VGL_MEM_PHYCONT)) >> 20),
+            (int) (vglMemTotal(VGL_MEM_PHYCONT) >> 20),
             (int) ((vglMemTotal(VGL_MEM_EXTERNAL) - vglMemFree(VGL_MEM_EXTERNAL)) >> 20));
 #endif
     }
