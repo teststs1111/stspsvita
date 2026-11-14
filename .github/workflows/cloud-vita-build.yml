@@ -135,4 +135,4 @@ jobs:
           rm -rf "$RUNNER_TEMP/sts-input"
           rm -rf work/assets_raw work/assets_vita work/gen work/generated_c work/jar_path.txt
           rm -rf work/assets-vita-metadata.json work/sce_sys build transpiler/build transpiler/.gradle
-# trigger jar validation after input relocation
+# trigger build after VitaGL PHYCONT enum fix
