@@ -231,7 +231,7 @@ void stsv_tex_spill_enable(void) {
 static size_t stsv_pool_maxfree(void) {
     size_t maxfree = vglMemFree(VGL_MEM_VRAM);
     size_t fr = vglMemFree(VGL_MEM_RAM);  if (fr > maxfree) maxfree = fr;
-    fr = vglMemFree(VGL_MEM_SLOW);         if (fr > maxfree) maxfree = fr;
+    fr = vglMemFree(VGL_MEM_PHYCONT);         if (fr > maxfree) maxfree = fr;
     return maxfree;
 }
 
@@ -258,10 +258,10 @@ static void stsv_diag_memory(const char *event) {
             event,
             (unsigned long) (vglMemFree(VGL_MEM_VRAM) >> 10),
             (unsigned long) (vglMemFree(VGL_MEM_RAM) >> 10),
-            (unsigned long) (vglMemFree(VGL_MEM_SLOW) >> 10),
+            (unsigned long) (vglMemFree(VGL_MEM_PHYCONT) >> 10),
             (unsigned long) (vglMemTotal(VGL_MEM_VRAM) >> 10),
             (unsigned long) (vglMemTotal(VGL_MEM_RAM) >> 10),
-            (unsigned long) (vglMemTotal(VGL_MEM_SLOW) >> 10),
+            (unsigned long) (vglMemTotal(VGL_MEM_PHYCONT) >> 10),
             (unsigned long) (stsv_spill_used >> 10),
             (unsigned long) (stsv_spill_peak >> 10),
             (unsigned long) (mi.fordblks >> 10),
