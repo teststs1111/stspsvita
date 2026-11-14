@@ -87,7 +87,7 @@ int main(int argc, char **argv) {
         (int) ok,
         (int) (vglMemTotal(VGL_MEM_VRAM) >> 20),
         (int) (vglMemTotal(VGL_MEM_RAM) >> 20),
-        (int) (vglMemTotal(VGL_MEM_SLOW) >> 20));
+        (int) (vglMemTotal(VGL_MEM_PHYCONT) >> 20));
 
     stsv_show_loading_screen();
 
