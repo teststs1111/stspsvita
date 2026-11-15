@@ -23,11 +23,11 @@ public final class FramePacingStatsTest {
         contains(report, "avg=63.9ms");
         contains(report, "max=250.0ms");
         contains(report, "<=16.7ms=1");
-        contains(report, "<=20ms=2");
-        contains(report, "<=25ms=1");
-        contains(report, "<=33.3ms=1");
-        contains(report, "<=50ms=1");
-        contains(report, "<=100ms=1");
+        contains(report, "16.7-20ms=2");
+        contains(report, "20-25ms=1");
+        contains(report, "25-33.3ms=1");
+        contains(report, "33.3-50ms=1");
+        contains(report, "50-100ms=1");
         contains(report, ">100ms=1");
         contains(report, "pre_avg=4.5ms pre_max=8.0ms");
         contains(report, "game_avg=8.5ms game_max=12.0ms");

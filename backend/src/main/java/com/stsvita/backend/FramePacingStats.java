@@ -94,11 +94,11 @@ final class FramePacingStats {
         report.append(" max=");
         appendMillis(report, maxFrameMicros);
         report.append(" <=16.7ms=").append(le16_7ms)
-                .append(" <=20ms=").append(le20ms)
-                .append(" <=25ms=").append(le25ms)
-                .append(" <=33.3ms=").append(le33_3ms)
-                .append(" <=50ms=").append(le50ms)
-                .append(" <=100ms=").append(le100ms)
+                .append(" 16.7-20ms=").append(le20ms)
+                .append(" 20-25ms=").append(le25ms)
+                .append(" 25-33.3ms=").append(le33_3ms)
+                .append(" 33.3-50ms=").append(le50ms)
+                .append(" 50-100ms=").append(le100ms)
                 .append(" >100ms=").append(over100ms)
                 .append(" pre_avg=");
         appendMillis(report, preAverageMicros);
