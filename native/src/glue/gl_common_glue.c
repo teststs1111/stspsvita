@@ -449,6 +449,18 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     return result;
 }
 
+/* Attribute every vitaGL circular-pool reservation directly. This catches
+ * the actual requested scratch size (including full-buffer copies triggered
+ * by small glBufferSubData updates), and records the vitaGL caller address. */
+extern uint8_t *__real_vgl_reserve_data_pool(uint32_t size);
+uint8_t *__wrap_vgl_reserve_data_pool(uint32_t size) {
+    void *caller = __builtin_return_address(0);
+    uint8_t *result = __real_vgl_reserve_data_pool(size);
+    fprintf(stderr, "[act2-diag] vitaGL-reserve size=%u caller=%p result=%p\n",
+            (unsigned int) size, caller, result);
+    return result;
+}
+
 /* Attribute large scratch-pool reservations to their originating GL buffer
  * operation. The VitaGL reserve hook alone sees only a byte count; these
  * records tell whether the pressure comes from buffer creation or updates. */
