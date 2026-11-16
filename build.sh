@@ -5,7 +5,7 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$ROOT"
 
 STS_INPUT=
-LANGS=eng
+LANGS=eng,jpn
 AUDIO_KBPS=32
 INCREMENTAL=0
 ALLOW_UNSUPPORTED=0
