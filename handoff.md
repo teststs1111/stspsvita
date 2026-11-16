@@ -39,3 +39,10 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Never request, upload, commit, or distribute the user's proprietary `desktop-1.0.jar`, extracted game assets, generated asset trees, or game-derived VPKs outside the private, short-lived build artifact workflow.
 - Keep progress and next actions in this file.
 - Distinguish host tests, VitaSDK builds, emulator tests, and physical Vita tests; never claim one proves another.
+
+## VSync follow-up (2026-11-16)
+- User reports the VSync checkbox remains checked after restart; the on-screen check does not prove the native swap-wait state.
+- Root cause candidate: the game's persisted desktop-oriented VSYNC preference can call `Graphics.setVSync(true)` after Vita backend initialization, overriding the backend's false startup config.
+- `VitaGraphics.setVSync(boolean)` now deliberately ignores the game's requested value and always calls `VitaNatives.setVsync(false)`. This enforces native VSync OFF even if the game's own checkbox remains checked.
+- Commit: `aca14324bd96c3f1defebadc803c094ae7ab75b8`.
+- Next: run host CI and a fresh Vita build; physical-device validation is still required to confirm actual frame pacing. UI checkbox state may still reflect the game's persisted preference and is not yet synchronized with the forced native OFF state.
