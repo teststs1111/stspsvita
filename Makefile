@@ -8,7 +8,7 @@
 # 0 copies through
 
 STS_DIR       ?=
-LANGS         ?= eng
+LANGS         ?= eng,jpn
 AUDIO_KBPS    ?= 32
 WORK          := work
 PY            := python3
