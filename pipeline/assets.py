@@ -365,6 +365,15 @@ def main() -> int:
         shutil.rmtree(dst_root)
 
     langs = {l.strip() for l in args.langs.split(",") if l.strip()}
+    missing_font_dirs = sorted(
+        lang for lang in langs & CJK_FONT_DIRS
+        if not (src_root / "font" / lang).is_dir()
+    )
+    if missing_font_dirs:
+        sys.exit(
+            "error: requested language font directories are missing from the "
+            f"game assets: {missing_font_dirs}; verify the source jar and --langs"
+        )
     dropped_font_dirs = CJK_FONT_DIRS - langs
 
     if args.audio_kbps:
