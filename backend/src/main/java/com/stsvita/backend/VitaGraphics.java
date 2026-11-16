@@ -219,7 +219,10 @@ public class VitaGraphics implements Graphics {
 
     @Override
     public void setVSync(boolean vsync) {
-        VitaNatives.setVsync(vsync);
+        // StS restores its own persisted VSYNC preference after backend init.
+        // Keep the Vita backend's requested policy authoritative: VSync stays
+        // disabled even when the game's desktop-oriented setting asks for it.
+        VitaNatives.setVsync(false);
     }
 
     @Override
