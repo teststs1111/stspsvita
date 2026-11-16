@@ -27,7 +27,7 @@ public class VitaApplication implements Application {
     public static class Config {
         public int width = 960;
         public int height = 544;
-        public boolean vsync = true;
+        public boolean vsync = false;
     }
 
     private final ApplicationListener listener;
