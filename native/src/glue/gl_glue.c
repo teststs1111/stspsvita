@@ -98,8 +98,7 @@ void stsv_swap_buffers(void) {
 }
 
 void stsv_set_vsync(int on) {
-    vsync_on = on;
-    /* vitaGL swap interval control lands with the M3 graphics work. */
+    vglWaitVblankStart(on ? GL_TRUE : GL_FALSE);
 }
 
 int32_t stsv_is_host_harness(void) {
