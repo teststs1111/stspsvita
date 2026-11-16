@@ -98,7 +98,7 @@ jobs:
       - name: Build VPK packages
         run: |
           set -euo pipefail
-          ./build.sh --sts-jar "$RUNNER_TEMP/sts-input/desktop-1.0.jar" --audio-kbps 0
+          ./build.sh --sts-jar "$RUNNER_TEMP/sts-input/desktop-1.0.jar" --langs eng,jpn --audio-kbps 0
           test -s build/STSVITA.vpk
           test -s build/STSVITA-slim.vpk
           ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk
