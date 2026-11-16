@@ -18,7 +18,7 @@ Usage: ./build.sh --sts-dir <install-dir> [options]
 Build a clean, validated full VPK, slim VPK, external asset tree, and manifest.
 
 Options:
-  --langs <list>       Comma-separated game languages to retain (default: eng)
+  --langs <list>       Comma-separated game languages to retain (default: eng,jpn)
   --audio-kbps <rate>  Re-encode OGG audio (default: 32 at 24kHz; 48 for higher fidelity; 0 copies unchanged)
   --incremental        Reuse assets/generated C and rebuild only the slim VPK
   --allow-unsupported-input

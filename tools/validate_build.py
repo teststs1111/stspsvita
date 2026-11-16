@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "pipeline"))
 
-from stsvita_common import KNOWN_JARS, find_jar, sha256_file  # noqa: E402
+from stsvita_common import CJK_FONT_DIRS, DEFAULT_LANGS, KNOWN_JARS, find_jar, sha256_file  # noqa: E402
 
 
 REQUIRED_VPK_FILES = {
@@ -111,6 +111,29 @@ def asset_inventory(root: Path) -> tuple[dict[str, Path], dict[str, object]]:
         "tree_sha256": tree_hash.hexdigest(),
         "png_dds_sibling_policy": "passed",
     }
+
+
+def requested_font_inventory(staged: dict[str, Path], langs: list[str]) -> dict[str, dict[str, int]]:
+    """Require non-empty staged font files for every requested CJK language."""
+    inventory: dict[str, dict[str, int]] = {}
+    for lang in sorted(set(langs) & CJK_FONT_DIRS):
+        prefix = f"font/{lang}/"
+        entries = [(rel, path) for rel, path in staged.items()
+                   if rel.startswith(prefix)]
+        if not entries:
+            raise ValidationError(
+                f"requested CJK language {lang!r} has no font files in staged assets"
+            )
+        empty = [rel for rel, path in entries if path.stat().st_size == 0]
+        if empty:
+            raise ValidationError(
+                f"requested CJK language {lang!r} has empty font files: {empty[:8]}"
+            )
+        inventory[lang] = {
+            "files": len(entries),
+            "bytes": sum(path.stat().st_size for _, path in entries),
+        }
+    return inventory
 
 
 def read_vpk(path: Path) -> tuple[zipfile.ZipFile, dict[str, zipfile.ZipInfo]]:
@@ -263,7 +286,7 @@ def main() -> int:
                     help="game install directory or desktop-1.0.jar")
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--build", type=Path, default=Path("build"))
-    ap.add_argument("--langs", default="eng")
+    ap.add_argument("--langs", default=DEFAULT_LANGS)
     ap.add_argument("--audio-kbps", type=int, default=32)
     ap.add_argument("--slim-only", action="store_true")
     args = ap.parse_args()
@@ -277,6 +300,7 @@ def main() -> int:
 
     try:
         staged, asset_stats = asset_inventory(assets)
+        asset_stats["requested_cjk_fonts"] = requested_font_inventory(staged, langs)
         validate_generated_inputs(work, jar, jar_hash, assets, langs, args.audio_kbps)
 
         slim_path = build / "STSVITA-slim.vpk"
