@@ -30,6 +30,8 @@ public class VitaGraphics implements Graphics {
 
     void init() {
         VitaNatives.gfxInit();
+        // Apply the requested swap-wait policy before the first game frame.
+        VitaNatives.setVsync(config.vsync);
         String version = gl20.glGetString(GL20.GL_VERSION);
         String vendor = gl20.glGetString(GL20.GL_VENDOR);
         String renderer = gl20.glGetString(GL20.GL_RENDERER);
