@@ -195,3 +195,5 @@ jobs:
 # Rebuild after backend VSync-off enforcement and Japanese font validation.
 
 # Rebuild with Act-2 GL buffer attribution diagnostics.
+
+# Rebuild after private build token permission and Actions secret refresh (2026-11-17).
