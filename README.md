@@ -235,8 +235,8 @@ rsync -a --delete work/assets_vita/ "$VITA3K_UX0/data/stsvita/assets/"
 
 ## Build Options
 
-Keep extra language fonts. CJK fonts alone are about 160MB, so English-only is
-the default:
+Japanese and English fonts are kept by default. Other CJK font sets can be
+added explicitly; all CJK fonts together are about 160MB:
 
 ```sh
 ./build.sh --sts-dir game --langs eng,jpn
