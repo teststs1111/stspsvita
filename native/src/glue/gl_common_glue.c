@@ -449,6 +449,29 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     return result;
 }
 
+/* Attribute large scratch-pool reservations to their originating GL buffer
+ * operation. The VitaGL reserve hook alone sees only a byte count; these
+ * records tell whether the pressure comes from buffer creation or updates. */
+void __real_glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage);
+void __wrap_glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage) {
+    if (stsv_city_draw_tracking || size >= (1 << 20)) {
+        fprintf(stderr, "[act2-diag] buffer-data target=0x%x size=%ld usage=0x%x data=%p tracking=%d\\n",
+                (unsigned int) target, (long) size, (unsigned int) usage, data,
+                stsv_city_draw_tracking);
+    }
+    __real_glBufferData(target, size, data, usage);
+}
+
+void __real_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid *data);
+void __wrap_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid *data) {
+    if (stsv_city_draw_tracking || size >= (1 << 20)) {
+        fprintf(stderr, "[act2-diag] buffer-subdata target=0x%x offset=%ld size=%ld data=%p tracking=%d\\n",
+                (unsigned int) target, (long) offset, (long) size, data,
+                stsv_city_draw_tracking);
+    }
+    __real_glBufferSubData(target, offset, size, data);
+}
+
 void __real_glDrawElements(GLenum mode, GLsizei count, GLenum type,
                            const GLvoid *indices);
 
