@@ -193,3 +193,5 @@ jobs:
           rm -rf work/assets-vita-metadata.json work/sce_sys build transpiler/build transpiler/.gradle
 # trigger build again after successful VPK generation; retrieve fresh 1-day artifact
 # Rebuild after backend VSync-off enforcement and Japanese font validation.
+
+# Rebuild with Act-2 GL buffer attribution diagnostics.
