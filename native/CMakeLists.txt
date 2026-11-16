@@ -91,7 +91,9 @@ target_link_options(${PROJECT_NAME} PRIVATE
   # check vgl_reserve_data_pool before memcpy. Keep the original behavior but
   # report invalid fallback results and the first City draw sizes first.
   "SHELL:-Wl,--wrap=vgl_reserve_data_pool"
-  "SHELL:-Wl,--wrap=glDrawElements")
+  "SHELL:-Wl,--wrap=glDrawElements"
+  "SHELL:-Wl,--wrap=glBufferData"
+  "SHELL:-Wl,--wrap=glBufferSubData")
 
 target_link_libraries(${PROJECT_NAME}
   vitaGL vitashark SceShaccCgExt mathneon SceShaccCg_stub
