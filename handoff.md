@@ -46,3 +46,11 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - `VitaGraphics.setVSync(boolean)` now deliberately ignores the game's requested value and always calls `VitaNatives.setVsync(false)`. This enforces native VSync OFF even if the game's own checkbox remains checked.
 - Commit: `aca14324bd96c3f1defebadc803c094ae7ab75b8`.
 - Next: run host CI and a fresh Vita build; physical-device validation is still required to confirm actual frame pacing. UI checkbox state may still reflect the game's persisted preference and is not yet synchronized with the forced native OFF state.
+
+
+## Stage 2 clear crash report (2026-11-16)
+- User reports that immediately after clearing Stage 2, the display went black, audio stopped, and the application returned to the Vita home screen.
+- This is consistent with an application abort/uncaught exception rather than a rendering-only hang; root cause is not confirmed.
+- Existing runtime patch `tools/vita_patch_runtime.py::patch_float_tostring` documents a previously reproduced TeaVM `Float.toString` buffer overrun that surfaced as `IndexOutOfBounds` in `String.<init>` while Gson serialized a save float during a room transition. It replaces the formatter with `snprintf("%.9g")`. This is a relevant lead because Stage 2 completion may trigger save/transition serialization, but the current report does not prove this is the same fault.
+- Native startup redirects stdout/stderr (including TeaVM uncaught-exception traces immediately before `abort()`) to `ux0:data/stsvita/stsvita.log`; the file is truncated at each launch. Critical stderr is unbuffered. The log is the highest-value diagnostic artifact to inspect after reproducing the crash.
+- Next investigation: obtain the log from the affected run if still present (do not relaunch first, because startup truncates it); inspect the tail for Java exception/TeaVM abort, native memory/GC diagnostics, and the last game/save transition events. If the log is unavailable, reproduce once and retrieve it before another launch. Keep VSync/FPS and unrelated performance code unchanged until evidence identifies the fault.
