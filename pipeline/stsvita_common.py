@@ -43,7 +43,7 @@ NATIVE_EXTS = {".dll", ".so", ".dylib", ".jnilib", ".a"}
 # (latin) fonts that always ship.
 CJK_FONT_DIRS = {"zhs", "zht", "jpn", "kor"}
 
-DEFAULT_LANGS = "eng"
+DEFAULT_LANGS = "eng,jpn"
 
 
 def find_jar(sts_dir: Path) -> Path:
