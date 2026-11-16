@@ -6,6 +6,7 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 2. Fix Japanese language text disappearing due to missing CJK font assets.
 
 ## Changes committed on optimization/baseline-profiling
+- Commit: `312a9ac9455edf962d21d2257c97a71fa181fe5c`.
 - `VitaApplication.Config.vsync` now defaults to false.
 - `VitaGraphics.init()` applies the config before the first frame through `VitaNatives.setVsync(config.vsync)`.
 - `native/src/glue/gl_glue.c` now calls VitaGL's documented `vglWaitVblankStart(on ? GL_TRUE : GL_FALSE)`; the old local flag was not connected to swap behavior. Keep `vglSwapBuffers(has_commondialog)` argument dedicated to Common Dialog composition; it is not the VSync control.
@@ -15,17 +16,20 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Cloud Vita build workflow explicitly passes `--langs eng,jpn`.
 
 ## Verification
-- Host-side checks succeeded on commit `796668e7e0b301dd36013267868c5fd4c3fc5892` (workflow run `43801579103`).
-- An earlier host run `43801575064` also succeeded.
-- VitaSDK/native VPK build and real-device behavior are not yet verified for these changes.
-- The Cloud Vita build workflow is configured to run from the next workflow-file commit; it downloads the user's private source jar from the existing temporary private release, builds locally in CI, and uploads short-retention artifacts. Do not publish or commit game-derived assets or VPKs.
+- Host-side checks succeeded on commit `312a9ac9455edf962d21d2257c97a71fa181fe5c`, workflow run `43801654118`.
+- VitaSDK/native cloud build succeeded on the same commit, workflow run `43801654160`.
+- All cloud build jobs succeeded, including VitaSDK installation, private source-jar retrieval, VPK packaging, and temporary artifact upload.
+- Validation reported: `validate: OK (full + slim, 3405 staged assets)`, with build options `--langs eng,jpn` and `--audio-kbps 0`.
+- Outputs: full `STSVITA.vpk` (187 MB) and code-only `STSVITA-slim.vpk` (7.5 MB).
+- Temporary Actions artifact: `STSVITA-temporary-build`, artifact ID `14197276777`, run `43801654160`; expires 2026-11-17 04:14 UTC (2026-11-17 13:14 JST).
+- The artifact currently contains only the two VPKs, not the separate `work/assets_vita/` directory. For the next device test, install the full `STSVITA.vpk`; do not use the slim VPK unless the matching external assets from this exact build are already deployed.
+- This verifies build/package creation, not Japanese glyph rendering or actual VSync behavior on a physical Vita. Real-device test remains outstanding.
 
 ## Next steps
-1. Confirm the cloud Vita build succeeds with Japanese fonts retained and the VSync native call linked.
-2. Inspect build manifest and asset tree to confirm `languages` contains `eng,jpn` and `font/jpn` files are packaged.
-3. If build succeeds, provide the VPK artifact and ask for one focused real-device check: Japanese UI text appears and VSync starts disabled; verify the game still feels smooth.
-4. If Japanese text still disappears despite font assets being present, inspect runtime language-to-font selection, FreeType glyph generation, glyph atlas uploads, and existing `[DIAG font]` logs. Do not assume missing assets are the only possible cause.
-5. Do not change unrelated performance paths unless measurements show a regression or bottleneck.
+1. User installs the full VPK from the temporary artifact and tests Japanese language selection, VSync-off behavior, and whether the game still feels smooth.
+2. If Japanese text still disappears, inspect runtime language-to-font selection, FreeType glyph generation, glyph atlas uploads, and existing `[DIAG font]` logs. Do not assume missing assets are the only possible cause.
+3. After this focused test, streamline the deployment artifact so asset-only updates can be transferred separately without a full VPK reinstall, while ensuring the asset pack and code package always come from the same clean build.
+4. Do not change unrelated performance paths unless measurements show a regression or bottleneck.
 
 ## Project policy
 - Work exclusively on `optimization/baseline-profiling` in `teststs1111/stspsvita`.
