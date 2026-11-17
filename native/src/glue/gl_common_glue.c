@@ -428,18 +428,19 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
         limit = (uintptr_t) circular_data_pool_limit[idx];
     }
     int overflow = before > limit || (uintptr_t) size > limit - before;
+    void *caller = __builtin_return_address(0);
     void *result = __real_vgl_reserve_data_pool(size);
     int invalid = result == NULL || (uintptr_t) result < UINT32_C(0x10000000);
-    if (stsv_trace_current_draw || invalid) {
+    if (stsv_trace_current_draw || invalid || size >= (1u << 20)) {
         fprintf(stderr,
                 "[act2-diag] draw-reserve seq=%d mode=0x%x count=%d "
-                "type=0x%x indices=%p size=%u result=%p "
+                "type=0x%x indices=%p size=%u caller=%p result=%p "
                 "invalid=%d idx=%d overflow=%d "
                 "circular=%p ptr=%p limit=%p post_ptr=%p\n",
                 stsv_city_draw_seq, (unsigned int) stsv_current_draw_mode,
                 (int) stsv_current_draw_count,
                 (unsigned int) stsv_current_draw_type,
-                stsv_current_draw_indices, (unsigned int) size, result,
+                stsv_current_draw_indices, (unsigned int) size, caller, result,
                 invalid, idx, overflow, (void *) base, (void *) before, (void *) limit,
                 idx >= 0 && idx < 4 ? (void *) circular_data_pool_ptr[idx] : NULL);
     }
@@ -452,15 +453,6 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
 /* Attribute every vitaGL circular-pool reservation directly. This catches
  * the actual requested scratch size (including full-buffer copies triggered
  * by small glBufferSubData updates), and records the vitaGL caller address. */
-extern uint8_t *__real_vgl_reserve_data_pool(uint32_t size);
-uint8_t *__wrap_vgl_reserve_data_pool(uint32_t size) {
-    void *caller = __builtin_return_address(0);
-    uint8_t *result = __real_vgl_reserve_data_pool(size);
-    fprintf(stderr, "[act2-diag] vitaGL-reserve size=%u caller=%p result=%p\n",
-            (unsigned int) size, caller, result);
-    return result;
-}
-
 /* Attribute large scratch-pool reservations to their originating GL buffer
  * operation. The VitaGL reserve hook alone sees only a byte count; these
  * records tell whether the pressure comes from buffer creation or updates. */
