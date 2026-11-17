@@ -91,6 +91,18 @@ jobs:
           grep -A1 '^\[vita\]' "$VITASDK/etc/pacman.conf"
           export VDPM_NONINTERACTIVE=1
           "$VITASDK/bin/pacman" --config "$VITASDK/etc/pacman.conf" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --refresh --noconfirm
+          # GitHub's package DB asset is 18,185 bytes with this published SHA-256.
+          # Pacman's CDN download above returned a different 6,964-byte DB; fetch the
+          # exact immutable asset directly and verify it before using it.
+          stable_repo="https://github.com/vitasdk/vitasdk-autobuild/releases/download/$stable_snapshot"
+          direct_db="$RUNNER_TEMP/vita.db"
+          curl --fail --location --retry 3 --silent --show-error "$stable_repo/vita.db" --output "$direct_db"
+          actual_db_size="$(stat -c%s "$direct_db")"
+          actual_db_sha="$(sha256sum "$direct_db" | awk '{print $1}')"
+          echo "Direct Vita DB size=$actual_db_size sha256=$actual_db_sha"
+          test "$actual_db_size" = "18185"
+          test "$actual_db_sha" = "fdc3383892de595ccc2ca55bf93ce54df84af1fa8f3f25c12595ad11d65c0202"
+          install -m 0644 "$direct_db" "$VITASDK/var/lib/pacman/sync/vita.db"
           # Make vdpm use the exact same config and database paths as the explicit pacman refresh.
           export VDPM_PACMAN_CONF="$VITASDK/etc/pacman.conf"
           echo "===== pacman configuration ====="
