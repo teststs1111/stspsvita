@@ -91,6 +91,14 @@ jobs:
           grep -A1 '^\[vita\]' "$VITASDK/etc/pacman.conf"
           export VDPM_NONINTERACTIVE=1
           "$VITASDK/bin/pacman" --config "$VITASDK/etc/pacman.conf" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --refresh --noconfirm
+          # Make vdpm use the exact same config and database paths as the explicit pacman refresh.
+          export VDPM_PACMAN_CONF="$VITASDK/etc/pacman.conf"
+          echo "===== pacman configuration ====="
+          cat "$VDPM_PACMAN_CONF"
+          echo "===== downloaded repository databases ====="
+          find "$VITASDK/var/lib/pacman/sync" -maxdepth 1 -type f -printf '%f %s bytes\\n' 2>/dev/null || true
+          echo "===== repository package inventory (required names) ====="
+          "$VITASDK/bin/pacman" --config "$VDPM_PACMAN_CONF" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list | grep -iE 'vitaGL|vitaShaRK|SceShaccCgExt|libmathneon|freetype|libpng|openal-soft|libvorbis|taihen' || true
           echo "===== verify required packages ====="
           for package in vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen; do
             ./vdpm info "$package"
