@@ -81,11 +81,12 @@ jobs:
           fi
           test -x "$VITASDK/bin/pacman"
           export VDPM_NONINTERACTIVE=1
-          sed -i '/^[[:space:]]*openssl[[:space:]]*$/d' include/install-packages.sh
-          sed -i '/^[[:space:]]*zlib[[:space:]]*$/d' include/install-packages.sh
-          # bzip2 is not published as a standalone target in the 2026.08 channel; this project does not link against libbz2.
-          sed -i '/^[[:space:]]*bzip2[[:space:]]*$/d' include/install-packages.sh
-          ./install-all.sh
+          # Install only packages directly required by native/CMakeLists.txt.
+          # The upstream install-all list contains unrelated legacy package targets
+          # that are absent from the current 2026.08 channel (e.g. libzip).
+          for package in vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen; do
+            ./vdpm -f "$package"
+          done
           echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/vitasdk/bin" >> "$GITHUB_PATH"
           arm-vita-eabi-gcc --version
@@ -202,4 +203,4 @@ jobs:
 # Rebuild after private build token permission and Actions secret refresh (2026-11-17).
 
 # VitaSDK 2026.08 bundles zlib in vitasdk-core; vdpm no longer has a standalone zlib target.
-# Skip bzip2: no standalone 2026.08 channel target and no project link dependency.
+# Install only direct native link dependencies instead of obsolete full vdpm package list.
