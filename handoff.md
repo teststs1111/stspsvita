@@ -132,3 +132,10 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - New diagnostic build run #24 is 44004032289 (job 133774850925), currently in progress at last check. Poll logs and inspect whether pacman sync DB actually contains the expected 134-package 2026.08 catalogue. Do not make assumptions about the root cause until that inventory is available.
 - Official 2026.08 catalogue/release docs show the immutable snapshot `packages-2026.08-snapshot-20261024.61.1` and list the required packages; see https://vitasdk.org/vitasdk-web/channel/2026.08/packages.html and https://vitasdk.org/vitasdk-web/releases.html.
 - Keep the proprietary JAR/assets/VPK private; no JAR retrieval or packaging until dependency resolution is proven. All changes remain on `optimization/baseline-profiling`; do not touch `main`.
+
+
+## Vita package database content inspection (2026-11-17)
+- Run #24 (44004032289 / job 133774850925) failed at VitaSDK package verification. Exact log evidence: config printed the pinned immutable repo URL packages-2026.08-snapshot-20261024.61.1, pacman --sync --refresh reported both databases downloaded, but the resulting local vita.db was only 6,964 bytes and pacman --sync --list returned no package entries. Required package metadata lookup then failed for vitaGL. This is a repository DB content/selection problem, not simply package naming. The official release API reports the pinned snapshot's vita.db asset is 18,185 bytes and includes the expected 134-package catalogue; the asset vitaGL-0.0.0.r1488.g2bdbe89-1-vita.pkg.tar.xz is present (278,360 bytes).
+- The workflow was extended to inspect each downloaded DB with file and tar -tf, dump pacman's complete repo list, and request exact vitaGL metadata without failing early. Commit: e1f3b452cf5b5ce3e8acc6bfb4d8aadf2dc22644.
+- Next run is triggered by this commit. Poll its Vita build job and inspect archive contents / metadata. The private game JAR is still gated behind successful SDK dependency installation; no VPK exists yet.
+- Keep all changes on optimization/baseline-profiling, do not touch main, and keep proprietary game input and outputs private.
