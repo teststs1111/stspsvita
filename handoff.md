@@ -139,3 +139,10 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - The workflow was extended to inspect each downloaded DB with file and tar -tf, dump pacman's complete repo list, and request exact vitaGL metadata without failing early. Commit: e1f3b452cf5b5ce3e8acc6bfb4d8aadf2dc22644.
 - Next run is triggered by this commit. Poll its Vita build job and inspect archive contents / metadata. The private game JAR is still gated behind successful SDK dependency installation; no VPK exists yet.
 - Keep all changes on optimization/baseline-profiling, do not touch main, and keep proprietary game input and outputs private.
+
+
+## VitaSDK database direct-asset verification (2026-11-17)
+- Latest build #25 (44005233304 / job 133778845306) completed failure at VitaSDK install; host checks passed. The downloaded vita.db is a valid gzip/tar archive but only 6,964 bytes and contains a small, mismatched package set (e.g. newer box2d/expat versions), while the official pinned 2026.08 catalogue has 134 packages and includes vitaGL. pacman --sync --list exposed only a small subset; vitaGL lookup failed.
+- GitHub Release API for vitasdk/vitasdk-autobuild tag packages-2026.08-snapshot-20261024.61.1 reports the exact vita.db asset size 18,185 bytes and digest sha256:fdc3383892de595ccc2ca55bf93ce54df84af1fa8f3f25c12595ad11d65c0202; release contains 139 assets and the vitaGL package asset is present.
+- Likely fault is pacman's repository DB retrieval/cache path returning a different file than the release asset, not absent package publication. Workflow now downloads the immutable vita.db asset directly with curl, verifies exact size and SHA-256, then installs it into pacman's sync DB path before listing/verifying dependencies. This is a guarded diagnostic/fix; if direct download differs, job stops before private JAR retrieval.
+- Workflow commit: 1f21cb5231e7d1da2ae9332ab2c6bc6d9f2449a9. Poll the resulting run and inspect direct DB verification plus pacman --sync --list / vdpm info vitaGL. No private JAR retrieval or VPK packaging has occurred yet. Keep all work on optimization/baseline-profiling; no main changes.
