@@ -97,8 +97,16 @@ jobs:
           cat "$VDPM_PACMAN_CONF"
           echo "===== downloaded repository databases ====="
           find "$VITASDK/var/lib/pacman/sync" -maxdepth 1 -type f -printf '%f %s bytes\\n' 2>/dev/null || true
+          for db in "$VITASDK"/var/lib/pacman/sync/*.db; do
+            [ -f "$db" ] || continue
+            echo "===== database file: $db ====="
+            file "$db"
+            tar -tf "$db" 2>&1 | head -n 35 || true
+          done
           echo "===== repository package inventory (required names) ====="
-          "$VITASDK/bin/pacman" --config "$VDPM_PACMAN_CONF" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list | grep -iE 'vitaGL|vitaShaRK|SceShaccCgExt|libmathneon|freetype|libpng|openal-soft|libvorbis|taihen' || true
+          "$VITASDK/bin/pacman" --config "$VDPM_PACMAN_CONF" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list || true
+          echo "===== targeted package metadata ====="
+          "$VITASDK/bin/pacman" --config "$VDPM_PACMAN_CONF" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --info vitaGL || true
           echo "===== verify required packages ====="
           for package in vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen; do
             ./vdpm info "$package"
