@@ -94,7 +94,7 @@ target_link_options(${PROJECT_NAME} PRIVATE
   "SHELL:-Wl,--wrap=glDrawElements"
   "SHELL:-Wl,--wrap=glBufferData"
   "SHELL:-Wl,--wrap=glBufferSubData"
-  "SHELL:-Wl,--wrap=vgl_reserve_data_pool")
+)
 
 target_link_libraries(${PROJECT_NAME}
   vitaGL vitashark SceShaccCgExt mathneon SceShaccCg_stub
