@@ -81,15 +81,22 @@ jobs:
           fi
           test -x "$VITASDK/bin/pacman"
           export VDPM_NONINTERACTIVE=1
-          # Inventory the signed 2026.08 repository before choosing package names.
-          # The old install-all targets are not valid names in this channel.
-          echo "===== vdpm list (installed core) ====="
+          # Inspect the exact signed package database and case-sensitive names.
+          echo "===== VitaSDK package configuration ====="
+          cat "$VITASDK/etc/pacman.conf"
+          echo "===== installed core ====="
           ./vdpm list || true
-          echo "===== raw pacman sync repositories ====="
-          "$VITASDK/bin/pacman" --config "$VITASDK/etc/pacman.conf" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list || true
-          echo "===== vdpm search vita ====="
-          ./vdpm search vita; search_status=$? || true
-          echo "vdpm search exit=$search_status"
+          echo "===== matching repository entries ====="
+          "$VITASDK/bin/pacman" --config "$VITASDK/etc/pacman.conf" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list | grep -Ei 'vitaGL|vitaShaRK|Shacc|mathneon|freetype|libpng|openal|vorbis|ogg|taihen|libzip' || true
+          for term in GL ShaRK Shacc mathneon freetype png openal vorbis ogg taihen; do
+            echo "===== vdpm search: $term ====="
+            ./vdpm search "$term" || true
+          done
+          echo "===== exact package metadata ====="
+          for package in vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen; do
+            echo "===== vdpm info: $package ====="
+            ./vdpm info "$package" || true
+          done
           echo "Package inventory collected; stop before proprietary inputs or packaging."
           exit 42
 
