@@ -127,6 +127,9 @@ jobs:
           ./vdpm install vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen bzip2
           echo "===== installed package verification ====="
           ./vdpm list
+          # Export the SDK location and compiler tools to subsequent workflow steps.
+          echo "VITASDK=$VITASDK" >> "$GITHUB_ENV"
+          echo "$VITASDK/bin" >> "$GITHUB_PATH"
 
       - name: Download private game input from temporary Release
         env:
