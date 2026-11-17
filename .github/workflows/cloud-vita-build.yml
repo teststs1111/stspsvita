@@ -83,10 +83,13 @@ jobs:
           export VDPM_NONINTERACTIVE=1
           # Inventory the signed 2026.08 repository before choosing package names.
           # The old install-all targets are not valid names in this channel.
-          for term in vitagl vitashark shacc mathneon freetype png openal vorbis taihen; do
-            echo "===== vdpm search: $term ====="
-            ./vdpm search "$term" || true
-          done
+          echo "===== vdpm list (installed core) ====="
+          ./vdpm list || true
+          echo "===== raw pacman sync repositories ====="
+          "$VITASDK/bin/pacman" --config "$VITASDK/etc/pacman.conf" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list || true
+          echo "===== vdpm search vita ====="
+          ./vdpm search vita; search_status=$? || true
+          echo "vdpm search exit=$search_status"
           echo "Package inventory collected; stop before proprietary inputs or packaging."
           exit 42
 
