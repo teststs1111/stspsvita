@@ -124,3 +124,11 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Workflow commit `70b07c29fef73c5460787adfb6ba5f9c34b7fbb6` pins only the Vita repo URL in generated pacman.conf to that immutable complete snapshot, refreshes the DB, verifies exact package metadata, then installs the native dependency set. It does not change the toolchain/core ABI and does not access proprietary game input until dependency installation succeeds.
 - Next: poll build run triggered by this commit; ensure refresh and package metadata succeed, then inspect dependency install and native compile. Host tests must pass. Private JAR/VPK upload remains gated behind successful install/build/manifest checks.
 - No VPK has been generated or uploaded. Keep all work on `optimization/baseline-profiling`; do not touch `main`.
+
+
+## VitaSDK package DB visibility diagnostic (2026-11-17)
+- Run #23 (44003078750 / job 133771686837) failed in the package verification step: after successfully rewriting pacman.conf to the immutable 2026.08 snapshot and refreshing the `x86_64-linux-gnu` and `vita` sync databases, `./vdpm info vitaGL` returned `package 'vitaGL' was not found`. The build never retrieved the private game JAR or created a VPK. Host checks run 61 (44003093206) passed.
+- The workflow now adds a bounded diagnostic before package verification: explicitly exports `VDPM_PACMAN_CONF`, prints the exact config, lists sync DB files and filters the pacman repository inventory for all required package names. This is commit 0a7c5b53d59e68850f404d192061a9e46c8e86a8.
+- New diagnostic build run #24 is 44004032289 (job 133774850925), currently in progress at last check. Poll logs and inspect whether pacman sync DB actually contains the expected 134-package 2026.08 catalogue. Do not make assumptions about the root cause until that inventory is available.
+- Official 2026.08 catalogue/release docs show the immutable snapshot `packages-2026.08-snapshot-20261024.61.1` and list the required packages; see https://vitasdk.org/vitasdk-web/channel/2026.08/packages.html and https://vitasdk.org/vitasdk-web/releases.html.
+- Keep the proprietary JAR/assets/VPK private; no JAR retrieval or packaging until dependency resolution is proven. All changes remain on `optimization/baseline-profiling`; do not touch `main`.
