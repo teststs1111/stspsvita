@@ -244,3 +244,4 @@ jobs:
 
 # VitaSDK 2026.08 bundles zlib in vitasdk-core; vdpm no longer has a standalone zlib target.
 # Install only direct native link dependencies instead of obsolete full vdpm package list.
+# Rebuild after fixing duplicate VitaGL reserve wrapper; verify VSync linkage and Japanese font payload (2026-11-17).
