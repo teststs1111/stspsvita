@@ -81,15 +81,14 @@ jobs:
           fi
           test -x "$VITASDK/bin/pacman"
           export VDPM_NONINTERACTIVE=1
-          # Install only packages directly required by native/CMakeLists.txt.
-          # The upstream install-all list contains unrelated legacy package targets
-          # that are absent from the current 2026.08 channel (e.g. libzip).
-          for package in vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen; do
-            ./vdpm -f "$package"
+          # Inventory the signed 2026.08 repository before choosing package names.
+          # The old install-all targets are not valid names in this channel.
+          for term in vitagl vitashark shacc mathneon freetype png openal vorbis taihen; do
+            echo "===== vdpm search: $term ====="
+            ./vdpm search "$term" || true
           done
-          echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/vitasdk/bin" >> "$GITHUB_PATH"
-          arm-vita-eabi-gcc --version
+          echo "Package inventory collected; stop before proprietary inputs or packaging."
+          exit 42
 
       - name: Download private game input from temporary Release
         env:
