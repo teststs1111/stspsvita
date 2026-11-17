@@ -82,3 +82,14 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - The diagnostic source changes compile successfully; after the private upload permission is corrected, rerun the build, retrieve the VPK privately, and test Act 2. Do not claim the runtime issue is fixed until the Vita log identifies the originating GL buffer call.
 
 - Follow-up instrumentation refinement: upstream vitaGL `buffers.c` shows `glNamedBufferSubData` can reserve a full `gpu_buf->size` scratch copy even when the requested sub-update is small. Therefore wrappers around `glBufferSubData` alone cannot reveal the true reservation size. Added a direct `__wrap_vgl_reserve_data_pool(uint32_t)` hook that logs the exact reserve size, caller return address, and returned pointer. This should identify the actual 8 MiB request and whether it originates in buffer data/subdata or another vitaGL caller. Commits: `e46b9a2b8edf5b6ad59af8ae6a445bb3c954c24e`, `ac9a510777c480794f757dbf681efe59f1ca428f`.
+
+
+## VitaSDK build workflow recovery (2026-11-17)
+- User asked to continue the private VPK build. The current cloud runner installs VitaSDK 2026.08 from upstream vdpm.
+- Build run #17 (43984774866, commit bf318891...) failed during package installation because the upstream all-packages script requested obsolete standalone bzip2; host tests passed.
+- A narrow follow-up skipped bzip2, but run #18 (43998384436, commit d1884a362543aaab61fcaa1358fb6a735112404d) then failed on libzip. This confirms that editing the giant upstream install-all list package-by-package is not robust.
+- Inspected native/CMakeLists.txt: the project directly links VitaSDK components vitaGL, vitashark, SceShaccCgExt, mathneon, freetype, png16, z, bz2, openal, vorbisfile, vorbis, ogg, and taihen, plus SDK stubs/runtime libraries.
+- Replaced upstream ./install-all.sh in .github/workflows/cloud-vita-build.yml with an explicit vdpm install loop for only the direct package targets: vitaGL, vitaShaRK, SceShaccCgExt, libmathneon, freetype, libpng, openal-soft, libvorbis, taihen. This lets vdpm resolve package dependencies while avoiding unrelated legacy package targets such as libzip.
+- Commit: 38414c8808ca94b9cc331a2beab6fbcb7396cb77 (ci: install only required VitaSDK packages). Push triggers a new host test and private Vita build. Confirm each requested package target exists in the 2026.08 channel from the next job log; if a direct target name is wrong, correct it based on actual package metadata rather than deleting random packages.
+- Run #18 host tests succeeded. Run #18 Vita build failed only at ./install-all.sh with error: target not found: libzip; game JAR download, VPK packaging, and private upload were skipped. Token write permission remains untested by a successful upload.
+- Keep proprietary game JAR/assets/VPK private. Do not change main; work only on optimization/baseline-profiling.
