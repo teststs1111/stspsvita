@@ -83,6 +83,8 @@ jobs:
           export VDPM_NONINTERACTIVE=1
           sed -i '/^[[:space:]]*openssl[[:space:]]*$/d' include/install-packages.sh
           sed -i '/^[[:space:]]*zlib[[:space:]]*$/d' include/install-packages.sh
+          # bzip2 is not published as a standalone target in the 2026.08 channel; this project does not link against libbz2.
+          sed -i '/^[[:space:]]*bzip2[[:space:]]*$/d' include/install-packages.sh
           ./install-all.sh
           echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/vitasdk/bin" >> "$GITHUB_PATH"
@@ -200,3 +202,4 @@ jobs:
 # Rebuild after private build token permission and Actions secret refresh (2026-11-17).
 
 # VitaSDK 2026.08 bundles zlib in vitasdk-core; vdpm no longer has a standalone zlib target.
+# Skip bzip2: no standalone 2026.08 channel target and no project link dependency.
