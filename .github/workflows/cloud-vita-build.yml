@@ -187,8 +187,11 @@ jobs:
         run: |
           set -euo pipefail
           arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x8158dd70 --stop-address=0x8158de80 build/native/STSVITA > build/native/STSVITA.cff-callsite.txt
+          arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x81500520 --stop-address=0x8150070c build/native/STSVITA > build/native/STSVITA.reserve-wrapper.txt
+          arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x8150ff70 --stop-address=0x81510180 build/native/STSVITA > build/native/STSVITA.draw-caller.txt
           arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 8 -A 8 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' > build/native/STSVITA.alloc-callers.txt || true
           cat build/native/STSVITA.cff-callsite.txt
+          cat build/native/STSVITA.reserve-wrapper.txt
 
       - name: Upload native callsite disassembly
         uses: actions/upload-artifact@v4
@@ -197,6 +200,8 @@ jobs:
           path: |
             build/native/STSVITA.cff-callsite.txt
             build/native/STSVITA.alloc-callers.txt
+            build/native/STSVITA.reserve-wrapper.txt
+            build/native/STSVITA.draw-caller.txt
           if-no-files-found: error
           retention-days: 1
 
