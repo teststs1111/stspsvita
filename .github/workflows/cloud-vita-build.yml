@@ -165,7 +165,9 @@ jobs:
           ./build.sh --sts-jar "$RUNNER_TEMP/sts-input/desktop-1.0.jar" --langs eng,jpn --audio-kbps 0
           test -s build/STSVITA.vpk
           test -s build/STSVITA-slim.vpk
-          ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk
+          test -s build/native/STSVITA.map
+          cp build/native/STSVITA.map build/STSVITA.map
+          ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map
 
       - name: Verify Japanese font payload and build manifest
         run: |
@@ -212,7 +214,7 @@ jobs:
             exit 1
           fi
           upload_url="$(jq -r '.upload_url' "$release_json" | sed 's/{?name,label}//')"
-          for asset in STSVITA.vpk build-manifest.json; do
+          for asset in STSVITA.vpk build-manifest.json STSVITA.map; do
             asset_id="$(jq -r --arg name "$asset" '.assets[]? | select(.name==$name) | .id' "$release_json" | head -n1)"
             if [ -n "$asset_id" ] && [ "$asset_id" != "null" ]; then
               curl --fail --silent --show-error -X DELETE \
