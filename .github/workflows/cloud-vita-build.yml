@@ -186,12 +186,8 @@ jobs:
       - name: Disassemble native allocator callsite
         run: |
           set -euo pipefail
-          arm-vita-eabi-objdump -d -C --line-numbers \\
-            --start-address=0x8158dd70 --stop-address=0x8158de80 \\
-            build/native/STSVITA > build/native/STSVITA.cff-callsite.txt
-          arm-vita-eabi-objdump -d -C build/native/STSVITA | \\
-            grep -E -B 8 -A 8 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' \\
-            > build/native/STSVITA.alloc-callers.txt || true
+          arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x8158dd70 --stop-address=0x8158de80 build/native/STSVITA > build/native/STSVITA.cff-callsite.txt
+          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 8 -A 8 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' > build/native/STSVITA.alloc-callers.txt || true
           cat build/native/STSVITA.cff-callsite.txt
 
       - name: Upload native callsite disassembly
