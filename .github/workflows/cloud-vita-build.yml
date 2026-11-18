@@ -169,6 +169,14 @@ jobs:
           cp build/native/STSVITA.map build/STSVITA.map
           ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map
 
+      - name: Upload native linker map for diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-linker-map
+          path: build/STSVITA.map
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Verify Japanese font payload and build manifest
         run: |
           set -euo pipefail
