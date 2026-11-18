@@ -94,6 +94,9 @@ target_link_options(${PROJECT_NAME} PRIVATE
   "SHELL:-Wl,--wrap=glDrawElements"
   "SHELL:-Wl,--wrap=glBufferData"
   "SHELL:-Wl,--wrap=glBufferSubData"
+  # Preserve link addresses so native crash/allocator callers can be mapped
+  # back to vitaGL and generated C without changing the executable behavior.
+  "SHELL:-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/STSVITA.map"
 )
 
 target_link_libraries(${PROJECT_NAME}
