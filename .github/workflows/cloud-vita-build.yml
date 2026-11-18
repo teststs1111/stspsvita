@@ -169,6 +169,30 @@ jobs:
           cp build/native/STSVITA.map build/STSVITA.map
           ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map
 
+      - name: Resolve native allocator caller address
+        run: |
+          set -euo pipefail
+          test -s build/native/STSVITA
+          {
+            echo "Runtime caller address: 0x8158dda3"
+            arm-vita-eabi-addr2line -f -C -e build/native/STSVITA 0x8158dda3 || true
+            echo
+            echo "Nearest native symbols:"
+            arm-vita-eabi-nm -n -C build/native/STSVITA | awk '$1 ~ /^[0-9a-fA-F]+$/ { print }' > build/native/STSVITA.symbols.txt
+            grep -B 8 -A 8 -i '8158dda3' build/native/STSVITA.symbols.txt || true
+          } > build/native/STSVITA.address-report.txt
+          cat build/native/STSVITA.address-report.txt
+
+      - name: Upload native address symbol report
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-address-symbol-report
+          path: |
+            build/native/STSVITA.address-report.txt
+            build/native/STSVITA.symbols.txt
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload native linker map for diagnostics
         uses: actions/upload-artifact@v4
         with:
