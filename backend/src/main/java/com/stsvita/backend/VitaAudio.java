@@ -1,7 +1,5 @@
 package com.stsvita.backend;
 
-import java.nio.ByteBuffer;
-
 import org.teavm.interop.Address;
 import org.teavm.interop.Import;
 import org.teavm.interop.c.Include;
@@ -12,7 +10,6 @@ import com.badlogic.gdx.audio.AudioRecorder;
 import com.badlogic.gdx.audio.Music;
 import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.files.FileHandle;
-import com.badlogic.gdx.utils.BufferUtils;
 
 /**
  * Audio backend: OpenAL playback + libvorbisfile OGG decode (audio_glue.c).
@@ -92,12 +89,11 @@ public class VitaAudio implements Audio {
         if (ogg.length == 0) {
             return new VitaSound(0);
         }
-        // Copy to an unsafe buffer so its address is stable while the glue
-        // decodes it synchronously; release it once decoded.
-        ByteBuffer buffer = BufferUtils.newUnsafeByteBuffer(ogg.length);
-        BufferUtils.copy(ogg, 0, buffer, ogg.length);
-        int handle = nSoundLoad(Buffers.addr(buffer), ogg.length);
-        BufferUtils.disposeUnsafeByteBuffer(buffer);
+        // The native loader consumes the encoded bytes synchronously and
+        // never retains this pointer. Keep the array live on this stack frame
+        // and pass its TeaVM backing address directly: an unsafe-buffer copy
+        // doubled the encoded OGG footprint during every SFX decode.
+        int handle = nSoundLoad(Address.ofData(ogg), ogg.length);
         if (handle == 0) {
             VitaNatives.log("[audio] newSound FAILED " + fileHandle.path()
                     + " (" + ogg.length + " bytes)");
