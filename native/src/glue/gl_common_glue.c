@@ -409,6 +409,37 @@ extern int vgl_circular_idx;
 
 void *__real_vgl_reserve_data_pool(uint32_t size);
 
+/* Successful large reservations can repeat tens of thousands of times from
+ * the same VitaGL callsite. Keep the first four and then one sample per 1024
+ * repeats; always retain draw-trace and failed-reserve records. This avoids
+ * making synchronous stderr/file logging a frame-time bottleneck itself. */
+#define STSV_RESERVE_LOG_SITES 128
+#define STSV_RESERVE_LOG_SAMPLE_EVERY 1024u
+static struct {
+    const void *caller;
+    uint32_t size;
+    uint32_t count;
+} stsv_reserve_log_sites[STSV_RESERVE_LOG_SITES];
+static unsigned int stsv_reserve_log_site_count;
+
+static int stsv_should_log_large_reserve(const void *caller, uint32_t size) {
+    for (unsigned int i = 0; i < stsv_reserve_log_site_count; i++) {
+        if (stsv_reserve_log_sites[i].caller == caller
+                && stsv_reserve_log_sites[i].size == size) {
+            uint32_t count = ++stsv_reserve_log_sites[i].count;
+            return count <= 4u || count % STSV_RESERVE_LOG_SAMPLE_EVERY == 0;
+        }
+    }
+    if (stsv_reserve_log_site_count >= STSV_RESERVE_LOG_SITES) {
+        return 0;
+    }
+    unsigned int i = stsv_reserve_log_site_count++;
+    stsv_reserve_log_sites[i].caller = caller;
+    stsv_reserve_log_sites[i].size = size;
+    stsv_reserve_log_sites[i].count = 1;
+    return 1;
+}
+
 void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     int idx = vgl_circular_idx;
     uintptr_t base = 0, before = 0, limit = 0;
@@ -421,7 +452,10 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     void *caller = __builtin_return_address(0);
     void *result = __real_vgl_reserve_data_pool(size);
     int invalid = result == NULL || (uintptr_t) result < UINT32_C(0x10000000);
-    if (stsv_trace_current_draw || invalid || size >= (1u << 20)) {
+    int trace = stsv_trace_current_draw;
+    int large_sample = size >= (1u << 20)
+            && stsv_should_log_large_reserve(caller, size);
+    if (trace || invalid || large_sample) {
         fprintf(stderr,
                 "[act2-diag] draw-reserve seq=%d mode=0x%x count=%d "
                 "type=0x%x indices=%p size=%u caller=%p result=%p "
@@ -439,7 +473,6 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     }
     return result;
 }
-
 /* Attribute every vitaGL circular-pool reservation directly. This catches
  * the actual requested scratch size (including full-buffer copies triggered
  * by small glBufferSubData updates), and records the vitaGL caller address. */
