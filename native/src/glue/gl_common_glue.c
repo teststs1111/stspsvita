@@ -374,15 +374,15 @@ static int stsv_tex_can_alloc(size_t need, int width, int height, const char *ta
         if (probe != NULL) {
             free(probe);
             if (stsv_spill_note(bound_id, need)) {
-            if (stsv_spill_used > stsv_spill_peak) {
-                stsv_spill_peak = stsv_spill_used;
-            }
-            fprintf(stderr, "[DIAG dxt] %sSPILL%s %dx%d need=%dKB spill_used=%dKB path=%s\n",
-                    boot_critical ? "BOOT-" : "", tag,
-                    width, height, (int) (need >> 10),
-                    (int) (stsv_spill_used >> 10), stsv_tex_path);
-            stsv_city_layer_admit_diag("spill", need, width, height, tag);
-            return 1;
+                if (stsv_spill_used > stsv_spill_peak) {
+                    stsv_spill_peak = stsv_spill_used;
+                }
+                fprintf(stderr, "[DIAG dxt] %sSPILL%s %dx%d need=%dKB spill_used=%dKB path=%s\n",
+                        boot_critical ? "BOOT-" : "", tag,
+                        width, height, (int) (need >> 10),
+                        (int) (stsv_spill_used >> 10), stsv_tex_path);
+                stsv_city_layer_admit_diag("spill", need, width, height, tag);
+                return 1;
             }
         }
     }
