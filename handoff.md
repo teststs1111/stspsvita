@@ -250,3 +250,15 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Host-side checks for this exact commit completed successfully: workflow run `44493342516`; build script syntax, build help, and `make test` all succeeded.
 - Private cloud Vita build for this exact commit is running: workflow run `44493342429`. Do not report VitaSDK build success until it completes.
 - The game-side Sound/AssetManager lifecycle remains uninspectable in this backend-only repository. Do not add speculative global Sound cleanup or alter asset lifetime.
+
+
+## SFX optimization VitaSDK build verified (2026-11-19)
+- Private cloud Vita build workflow run `44493342429` completed with conclusion `success` for code commit `9b3d82fddaf71ba1ee1b72b80f9701659a60e152` on `optimization/baseline-profiling`.
+- All workflow steps succeeded: VitaSDK installation, private JAR retrieval, full/slim VPK build, native address/callsite reports, Japanese font payload and manifest verification, private release upload, and cleanup of temporary game-derived inputs.
+- Full VPK: `STSVITA.vpk`, 195,855,501 bytes; SHA-256 `9c8cd84ded4c24a8f272d7de3653a66837364d709d8804e7b6462d77ae3386ed`; private asset ID `767128192`.
+- Private release `teststs1111/stspsvita-build-private`, tag `temp-build-1`, was updated 2026-11-19 09:54 UTC. VPK URL: https://github.com/teststs1111/stspsvita-build-private/releases/download/temp-build-1/STSVITA.vpk
+- Manifest: asset ID `767128506`, 2,504 bytes, SHA-256 `13a6337615be7a145508c3e9b6aa824e1a21ce8b1b0c348bfed332c351bc6d47`. Build ID `9b3d82fddaf7-bb3245af30c5`; requested languages `eng,jpn`; Japanese font payload 3 files / 49,929,880 bytes; `full_assets_match_staging=True`.
+- Native linker map asset ID `767128637`, 7,858,582 bytes. Diagnostic workflow artifacts: `native-callsite-disassembly` ID `14516358380`, `native-address-symbol-report` ID `14516348244`, `native-linker-map` ID `14517700491`. These expire around 2026-11-20 09:54 UTC.
+- This confirms VitaSDK compilation/packaging and private artifact upload, not real Vita runtime behavior. No device test has been reported; do not claim the Act-transition memory failure is fixed. No reinstall requested yet.
+- Host checks on the same code commit also passed in run `44493342516`. The only code change in `9b3d82f` relative to the earlier audio optimization is a lifetime-contract comment; the earlier SFX encoded-data copy reduction is included in this build.
+- Next: continue source-backed native memory diagnosis and preserve the diagnostic artifacts before expiry if useful. Only request the user to install/test when a specific device-side measurement is necessary and the build is the exact required diagnostic/fix build.
