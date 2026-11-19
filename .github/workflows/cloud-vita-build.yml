@@ -7,6 +7,12 @@ on:
       - optimization/baseline-profiling
     paths:
       - ".github/workflows/cloud-vita-build.yml"
+      - "native/**"
+      - "backend/**"
+      - "transpiler/**"
+      - "Makefile"
+      - "build.sh"
+      - "pipeline/**"
 
 permissions:
   contents: read
