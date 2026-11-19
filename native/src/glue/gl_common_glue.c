@@ -1,5 +1,6 @@
 #include "stsv_gl.h"
 #include "stsvita_glue.h"
+#include "stsv_spill_tracker.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -195,30 +196,16 @@ static int stsv_spill_enabled;
  * fight. Track which texture ids were admitted and
  * give the bytes back when they are deleted or re-uploaded. */
 #define STSV_SPILL_TRACK 128
-static struct { int id; size_t bytes; } stsv_spilled[STSV_SPILL_TRACK];
+static stsv_spill_entry stsv_spilled[STSV_SPILL_TRACK];
 
 static void stsv_spill_refund(int id) {
-    for (int i = 0; i < STSV_SPILL_TRACK; i++) {
-        if (stsv_spilled[i].id == id) {
-            stsv_spill_used -= stsv_spilled[i].bytes;
-            stsv_spilled[i].id = 0;
-            stsv_spilled[i].bytes = 0;
-        }
-    }
+    (void) stsv_spill_tracker_refund(stsv_spilled, STSV_SPILL_TRACK,
+                                     id, &stsv_spill_used);
 }
 
-static void stsv_spill_note(int id, size_t bytes) {
-    if (id == 0) {
-        return;
-    }
-    stsv_spill_refund(id); /* re-upload of an already-spilled texture */
-    for (int i = 0; i < STSV_SPILL_TRACK; i++) {
-        if (stsv_spilled[i].id == 0) {
-            stsv_spilled[i].id = id;
-            stsv_spilled[i].bytes = bytes;
-            return;
-        }
-    }
+static int stsv_spill_note(int id, size_t bytes) {
+    return stsv_spill_tracker_admit(stsv_spilled, STSV_SPILL_TRACK, id,
+                                    bytes, STSV_SPILL_BUDGET, &stsv_spill_used);
 }
 
 /* Called from Java once the game's create() has finished (VitaApplication). */
@@ -378,13 +365,15 @@ static int stsv_tex_can_alloc(size_t need, int width, int height, const char *ta
         return 1;
     }
     int boot_critical = !stsv_spill_enabled && stsv_boot_critical_texture();
+    int bound_id = stsv_bound_tex();
     if ((stsv_spill_enabled || boot_critical)
-            && stsv_spill_used + need <= STSV_SPILL_BUDGET) {
+            && stsv_spill_tracker_can_admit(stsv_spilled, STSV_SPILL_TRACK,
+                                            bound_id, need, STSV_SPILL_BUDGET,
+                                            stsv_spill_used)) {
         void *probe = malloc(need + STSV_SPILL_RESERVE);
         if (probe != NULL) {
             free(probe);
-            stsv_spill_used += need;
-            stsv_spill_note(stsv_bound_tex(), need);
+            if (stsv_spill_note(bound_id, need)) {
             if (stsv_spill_used > stsv_spill_peak) {
                 stsv_spill_peak = stsv_spill_used;
             }
@@ -394,6 +383,7 @@ static int stsv_tex_can_alloc(size_t need, int width, int height, const char *ta
                     (int) (stsv_spill_used >> 10), stsv_tex_path);
             stsv_city_layer_admit_diag("spill", need, width, height, tag);
             return 1;
+            }
         }
     }
     static int skips = 0;
