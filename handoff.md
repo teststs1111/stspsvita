@@ -242,3 +242,11 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Verified GitHub Actions directly through the repository workflow-runs collection: latest head `5a7ebbd...` has Host-side checks run `44490693740` (run #98), event `push`, conclusion `success`. This corrects earlier handoff wording that CI was still unconfirmed.
 - The latest head has no corresponding VitaSDK build run in the recent workflow list. The most recent successful private Vita build is run `44455664046` on commit `d4f7d7ba8dc59a8f78c68cac892dd119f84bd009`; that is not the exact current head. Do not describe the latest SFX change as freshly VitaSDK-built unless a run for `5a7ebbd...` is found.
 - Next useful path: if game-side Sound lifecycle must be proven, inspect the exact matching game source/JAR in the private build workflow environment without publishing or copying proprietary contents into this public repository. Otherwise keep the current backend changes and focus on measured native allocation/texture diagnostics. No physical Vita validation has been reported.
+
+
+## SFX pointer-lifetime clarification and current validation (2026-11-19)
+- Added a callsite comment in `VitaAudio.newSound()` documenting the key lifetime contract: `stsv_sound_load()` is synchronous through decode and OpenAL upload, so the Java byte array may be released after the native call returns. This is documentation only; no runtime behavior changed.
+- Commit: `9b3d82fddaf71ba1ee1b72b80f9701659a60e152`.
+- Host-side checks for this exact commit completed successfully: workflow run `44493342516`; build script syntax, build help, and `make test` all succeeded.
+- Private cloud Vita build for this exact commit is running: workflow run `44493342429`. Do not report VitaSDK build success until it completes.
+- The game-side Sound/AssetManager lifecycle remains uninspectable in this backend-only repository. Do not add speculative global Sound cleanup or alter asset lifetime.
