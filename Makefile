@@ -115,7 +115,7 @@ test:
 	  java -cp build/frame-pacing-test com.stsvita.backend.FramePacingStatsTest
 	@set -eu; \
 	  mkdir -p build; \
-	  ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
+	  $(CC) -std=c11 -Wall -Wextra -Werror \
 	    -I native/src/glue native/tests/spill_tracker_test.c \
 	    -o build/spill-tracker-test; \
 	  build/spill-tracker-test; \
