@@ -91,8 +91,9 @@ public class VitaAudio implements Audio {
         }
         // The native loader consumes the encoded bytes synchronously and
         // never retains this pointer. Keep the array live on this stack frame
-        // and pass its TeaVM backing address directly: an unsafe-buffer copy
-        // doubled the encoded OGG footprint during every SFX decode.
+        // and pass its TeaVM backing address directly. The old unsafe-buffer
+        // route also made Buffers.addr() drain a second copy into a pinned
+        // Java array, so it held two redundant copies during SFX decoding.
         int handle = nSoundLoad(Address.ofData(ogg), ogg.length);
         if (handle == 0) {
             VitaNatives.log("[audio] newSound FAILED " + fileHandle.path()
