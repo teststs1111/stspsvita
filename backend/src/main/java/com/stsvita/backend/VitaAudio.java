@@ -94,6 +94,8 @@ public class VitaAudio implements Audio {
         // and pass its TeaVM backing address directly. The old unsafe-buffer
         // route also made Buffers.addr() drain a second copy into a pinned
         // Java array, so it held two redundant copies during SFX decoding.
+        // Keep this call synchronous: stsv_sound_load() finishes decoding and
+        // OpenAL upload before returning, so the Java byte[] may be released after it.
         int handle = nSoundLoad(Address.ofData(ogg), ogg.length);
         if (handle == 0) {
             VitaNatives.log("[audio] newSound FAILED " + fileHandle.path()
