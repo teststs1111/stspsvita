@@ -206,13 +206,37 @@ jobs:
           set -euo pipefail
           jar="$RUNNER_TEMP/sts-input/desktop-1.0.jar"
           report="$RUNNER_TEMP/sts-input/settings-ui-inspection.txt"
+          entries="$RUNNER_TEMP/sts-input/jar-entries.txt"
           {
             echo "Settings UI inspection metadata"
-            echo "Input SHA-256:"
             sha256sum "$jar"
             echo
-            echo "Candidate class names:"
-            grep -E '(^|/)(Options|Settings|.*Options.*|.*Settings.*)\\.class
+            echo "Candidate classes:"
+            grep -E '(Options|Settings).*class$' "$entries" | head -n 160 || true
+            echo
+            while IFS= read -r entry; do
+              class="${entry%.class}"
+              class="${class//\//.}"
+              case "$class" in
+                com.megacrit.cardcrawl.*)
+                  echo
+                  echo "===== $class ====="
+                  javap -classpath "$jar" -p -c -constants "$class" 2>&1 || true
+                  ;;
+              esac
+            done < <(grep '^com/megacrit/cardcrawl/.*\(Options\|Settings\).*class$' "$entries" | head -n 80)
+          } > "$report"
+          test -s "$report"
+          api="https://api.github.com/repos/teststs1111/stspsvita-build-private"
+          release_json="$RUNNER_TEMP/private-inspection-release.json"
+          curl --fail --silent --show-error -H "Authorization: Bearer $STS_BUILD_TOKEN" -H "Accept: application/vnd.github+json" "$api/releases/tags/temp-build-1" > "$release_json"
+          upload_url="$(jq -r '.upload_url' "$release_json" | sed 's/{?name,label}//')"
+          old_id="$(jq -r '.assets[]? | select(.name==\"settings-ui-inspection.txt\") | .id' "$release_json" | head -n1)"
+          if [ -n "$old_id" ] && [ "$old_id" != "null" ]; then
+            curl --fail --silent --show-error -X DELETE -H "Authorization: Bearer $STS_BUILD_TOKEN" -H "Accept: application/vnd.github+json" "$api/releases/assets/$old_id"
+          fi
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer $STS_BUILD_TOKEN" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" --data-binary @"$report" "$upload_url?name=settings-ui-inspection.txt" > "$RUNNER_TEMP/settings-inspection-upload.json"
+          echo "Uploaded private settings UI inspection report ($(stat -c%s "$report") bytes)"
       - name: Build VPK packages
         run: |
           set -euo pipefail
