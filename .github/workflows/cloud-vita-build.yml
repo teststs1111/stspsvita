@@ -209,72 +209,19 @@ jobs:
           cp build/native/STSVITA.map build/STSVITA.map
           ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map
 
-      - name: Disassemble and map vitaGL reserve callsites
+      - name: Disassemble and map vitaGL reserve callsites (Thumb LR)
         run: |
           set -euo pipefail
-          pacman -Q | grep -i '^vitagl ' > build/native/STSVITA.vitagl-version.txt || true
+          vdpm info vitaGL | awk '/^[[:space:]]*(Name|Version)[[:space:]]*:/ { print }' > build/native/STSVITA.vitagl-version.txt
+          grep -qi '^Version[[:space:]]*:' build/native/STSVITA.vitagl-version.txt
           arm-vita-eabi-objdump -d -C --line-numbers build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<__wrap_vgl_reserve_data_pool>' > build/native/STSVITA.reserve-callers.txt || true
           arm-vita-eabi-objdump -d -C --disassemble=__wrap_vgl_reserve_data_pool build/native/STSVITA > build/native/STSVITA.reserve-wrapper.txt
           arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<vgl_reserve_data_pool>' > build/native/STSVITA.direct-reserve-calls.txt || true
           arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' > build/native/STSVITA.alloc-callers.txt || true
-          python3 - <<'PY'
-          import re
-          import subprocess
-          from pathlib import Path
-
-          binary = "build/native/STSVITA"
-          proc = subprocess.Popen(
-              ["arm-vita-eabi-objdump", "-d", "-C", binary],
-              stdout=subprocess.PIPE, text=True
-          )
-          current = "?"
-          current_start = 0
-          wrapped = []
-          bypass = []
-          for line in proc.stdout:
-              symbol = re.match(r"^\s*([0-9a-fA-F]+) <(.+)>:\s*$", line)
-              if symbol:
-                  current_start = int(symbol.group(1), 16)
-                  current = symbol.group(2).removesuffix("()")
-                  continue
-              call = re.match(
-                  r"^\s*([0-9a-fA-F]+):\s+.*\bblx?\s+.*<(__wrap_vgl_reserve_data_pool|vgl_reserve_data_pool)>",
-                  line
-              )
-              if not call:
-                  continue
-              address = int(call.group(1), 16)
-              target = call.group(2)
-              entry = (address, address + 4, current, address - current_start)
-              if target == "__wrap_vgl_reserve_data_pool":
-                  wrapped.append(entry)
-              elif current != "__wrap_vgl_reserve_data_pool":
-                  bypass.append(entry)
-          if proc.wait() != 0:
-              raise SystemExit("objdump failed while resolving reserve callsites")
-
-          lines = ["VitaGL package:"]
-          version = Path("build/native/STSVITA.vitagl-version.txt")
-          lines.extend(version.read_text().splitlines() if version.exists() else ["not reported"])
-          lines.append("")
-          lines.append(f"wrapped vgl_reserve_data_pool callsites: {len(wrapped)}")
-          for call, ret, function, offset in wrapped:
-              lines.append(
-                  f"call=0x{call:08x} return=0x{ret:08x} "
-                  f"function={function} function_offset=0x{offset:x}"
-              )
-          lines.append("")
-          lines.append(f"direct calls to real vgl_reserve_data_pool outside wrapper: {len(bypass)}")
-          for call, ret, function, offset in bypass:
-              lines.append(
-                  f"UNWRAPPED call=0x{call:08x} return=0x{ret:08x} "
-                  f"function={function} function_offset=0x{offset:x}"
-              )
-          Path("build/native/STSVITA.reserve-caller-symbols.txt").write_text(
-              "\n".join(lines) + "\n"
-          )
-          print("\n".join(lines))
-          PY
+          python3 tools/vitagl_reserve_map.py \
+            --binary build/native/STSVITA \
+            --version-file build/native/STSVITA.vitagl-version.txt \
+            --output build/native/STSVITA.reserve-caller-symbols.txt
           cat build/native/STSVITA.reserve-wrapper.txt
 
       - name: Upload native callsite disassembly
