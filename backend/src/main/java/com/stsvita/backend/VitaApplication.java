@@ -118,14 +118,13 @@ public class VitaApplication implements Application {
             long stat = VitaFileHandle.drainStatStats(); // sub-100ms tail
             frameTrace.record(frameDurationMicros, preMicros, gameMicros,
                     swapMicros, ft, subtex, stb, dxt, up, io, stat);
-            if (frameTrace.shouldDump(frameDurationMicros, frameEnd)) {
-                VitaNatives.log(frameTrace.dumpRecent());
-            }
+            String frameTraceReport = frameTrace.shouldDump(
+                    frameDurationMicros, frameEnd) ? frameTrace.dumpRecent() : null;
             if (frameMs > 200L) {
                 // wall >> process means the console was suspended/minimized
-                // mid-frame, not a real stall (process time pauses, RTC not).
+                // mid-frame, not a real stall (process time pauses, RTC does).
                 long wallMs = (VitaNatives.wallMicros() - wallStart) / 1000L;
-                VitaNatives.log("[hitch] frame took " + frameMs + "ms (wall "
+                String hitchReport = "[hitch] frame took " + frameMs + "ms (wall "
                         + wallMs + "ms, pre " + preMs + "ms, game " + gameMs
                         + "ms, swap " + swapMs
                         + "ms, ft " + (ft / 1000) + "ms/" + (ft % 1000)
@@ -135,7 +134,11 @@ public class VitaApplication implements Application {
                         + ", up " + (up / 1000) + "ms/" + (up % 1000)
                         + ", io " + (io / 1000) + "ms/" + (io % 1000)
                         + ", stat " + (stat / 1000) + "ms/" + (stat % 1000)
-                        + ")");
+                        + ")";
+                VitaNatives.log(frameTraceReport == null ? hitchReport
+                        : frameTraceReport + "\n" + hitchReport);
+            } else if (frameTraceReport != null) {
+                VitaNatives.log(frameTraceReport);
             }
         }
 
