@@ -111,8 +111,11 @@ test:
 	  mkdir -p build/frame-pacing-test; \
 	  javac -d build/frame-pacing-test \
 	    backend/src/main/java/com/stsvita/backend/FramePacingStats.java \
-	    backend/src/test/java/com/stsvita/backend/FramePacingStatsTest.java; \
-	  java -cp build/frame-pacing-test com.stsvita.backend.FramePacingStatsTest
+	    backend/src/test/java/com/stsvita/backend/FramePacingStatsTest.java \
+	    backend/src/main/java/com/stsvita/backend/FrameTraceBuffer.java \
+	    backend/src/test/java/com/stsvita/backend/FrameTraceBufferTest.java; \
+	  java -cp build/frame-pacing-test com.stsvita.backend.FramePacingStatsTest; \
+	  java -cp build/frame-pacing-test com.stsvita.backend.FrameTraceBufferTest
 	@set -eu; \
 	  mkdir -p build; \
 	  $(CC) -std=c11 -Wall -Wextra -Werror \
