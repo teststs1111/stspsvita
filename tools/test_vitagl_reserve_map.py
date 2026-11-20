@@ -35,7 +35,7 @@ class ReserveCallsiteMapTest(unittest.TestCase):
  8150db12: f7f2 fd5f bl 815005d4 <__wrap_vgl_reserve_data_pool>
 """)
         report = format_report(
-            "Name : vitaGL\\nVersion : 0.0.0.r1488.g2bdbe89-1",
+            "Name : vitaGL\nVersion : 0.0.0.r1488.g2bdbe89-1",
             wrapped,
             bypass,
         )

@@ -9,9 +9,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-_SYMBOL_RE = re.compile(r"^\\s*([0-9a-fA-F]+) <(.+)>:\\s*$")
+_SYMBOL_RE = re.compile(r"^\s*([0-9a-fA-F]+) <(.+)>:\s*$")
 _CALL_RE = re.compile(
-    r"^\\s*([0-9a-fA-F]+):\\s+.*\\bblx?\\s+.*<(__wrap_vgl_reserve_data_pool|vgl_reserve_data_pool)>"
+    r"^\s*([0-9a-fA-F]+):\s+.*\bblx?\s+.*<(__wrap_vgl_reserve_data_pool|vgl_reserve_data_pool)>"
 )
 
 
@@ -84,7 +84,7 @@ def format_report(version_text: str, wrapped: list[ReserveCall], bypass: list[Re
             f"caller=0x{entry.thumb_lr:08x} "
             f"function={entry.function} function_offset=0x{entry.function_offset:x}"
         )
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
 
 
 def main() -> int:
