@@ -557,6 +557,10 @@ void stsv_tex_image_rgba(int target, int level, int width, int height, const voi
     /* Full redefinition: the bound id is no longer compressed (recycled ids
      * kept stale marks and killed later glyph sub-uploads; see unmark). */
     int bound_id = stsv_bound_tex();
+    /* vitaGL frees the previous base-level storage on a level-0 redefinition.
+     * Release its old spill admission before testing the replacement. Higher
+     * mip levels extend the existing allocation and must not refund it. */
+    if (level == 0) stsv_spill_refund(bound_id);
     stsv_unmark_compressed(bound_id);
     /* Known glyph pages must stay uncompressed forever, no matter how full
      * their re-upload is — see stsv_mark_glyph_page. */
@@ -671,8 +675,12 @@ void stsv_tex_image_compressed(int target, int level, int internal_format,
      * successful upload below re-marks. The 4x4-blank drop paths then leave
      * the texture correctly unmarked (they are plain RGBA). A recycled
      * glyph-page id redefined from a.dds is no longer a glyph page. */
-    stsv_unmark_compressed(stsv_bound_tex());
-    stsv_unmark_glyph_page(stsv_bound_tex());
+    int bound_id = stsv_bound_tex();
+    /* A level-0 compressed definition replaces the previous texture storage;
+     * mip-level uploads extend that storage and retain its spill accounting. */
+    if (level == 0) stsv_spill_refund(bound_id);
+    stsv_unmark_compressed(bound_id);
+    stsv_unmark_glyph_page(bound_id);
 #endif
     /* width/height are the LOGICAL dimensions (what the game's layout/UV math
      * sees via texture.getWidth()). Reduced-data.dds files keep the original

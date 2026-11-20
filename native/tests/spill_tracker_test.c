@@ -61,6 +61,17 @@ static void test_refund_unknown_id_is_noop(void) {
     assert(used == 80 && entries[0].id == 9);
 }
 
+/* Level-0 glTexImage redefinition can move a texture from spill storage back
+ * into a vitaGL pool. Its old spill charge must not block later admissions. */
+static void test_redefinition_to_pool_releases_previous_spill(void) {
+    stsv_spill_entry entries[2] = {{9, 80}, {0, 0}};
+    size_t used = 80;
+    assert(stsv_spill_tracker_refund(entries, 2, 9, &used));
+    assert(used == 0 && entries[0].id == 0);
+    assert(stsv_spill_tracker_admit(entries, 2, 10, 100, 100, &used));
+    assert(used == 100 && entries[0].id == 10);
+}
+
 int main(void) {
     test_reupload_replaces_old_bytes();
     test_reupload_budget_uses_projected_usage();
@@ -69,5 +80,6 @@ int main(void) {
     test_full_table_allows_existing_id_update();
     test_refund_frees_budget_and_slot();
     test_refund_unknown_id_is_noop();
+    test_redefinition_to_pool_releases_previous_spill();
     return 0;
 }
