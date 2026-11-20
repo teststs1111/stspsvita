@@ -67,11 +67,16 @@ final class FrameTraceBuffer {
             int offset = slot * FIELDS;
             out.append('\n').append("  #").append(firstSequence + i);
             for (int field = 0; field < FIELDS; field++) {
-                out.append(' ').append(NAMES[field]).append('=')
-                        .append(values[offset + field] / 1000L)
-                        .append('.')
-                        .append((values[offset + field] % 1000L) / 100L)
-                        .append("ms");
+                long value = values[offset + field];
+                out.append(' ').append(NAMES[field]).append('=');
+                if (field < 4) {
+                    out.append(value / 1000L).append('.')
+                            .append((value % 1000L) / 100L).append("ms");
+                } else {
+                    // Native/file counters are packed as milliseconds*1000 + calls.
+                    out.append(value / 1000L).append("ms/")
+                            .append(value % 1000L).append(" calls");
+                }
             }
         }
         return out.toString();
