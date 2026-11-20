@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: temporary-vita-build
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -50,6 +50,40 @@ jobs:
               "$api/actions/artifacts/$artifact_id"
             echo "Deleted public VPK artifact $artifact_id"
           done < <(jq -r '.artifacts[]?.id' <<< "$artifacts_json")
+
+      - name: Remove private VPK and manifest outputs
+        env:
+          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
+          api="https://api.github.com/repos/teststs1111/stspsvita-build-private"
+          release_json="$RUNNER_TEMP/private-release-cleanup.json"
+          status="$(curl --silent --show-error -o "$release_json" -w '%{http_code}' \
+            -H "Authorization: Bearer $STS_BUILD_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/releases/tags/temp-build-1")"
+          if [ "$status" = "404" ]; then
+            echo "Temporary private release not found; nothing to clean"
+            exit 0
+          fi
+          if [ "$status" != "200" ]; then
+            echo "Private release cleanup lookup failed with HTTP $status"
+            jq -r '.message // "No API error message returned"' "$release_json"
+            exit 1
+          fi
+          while IFS= read -r asset_id; do
+            [ -n "$asset_id" ] || continue
+            delete_status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $STS_BUILD_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$api/releases/assets/$asset_id")"
+            if [ "$delete_status" != "204" ] && [ "$delete_status" != "404" ]; then
+              echo "Private release asset $asset_id deletion failed with HTTP $delete_status"
+              exit 1
+            fi
+            echo "Removed private game-derived output asset $asset_id"
+          done < <(jq -r '.assets[]? | select(.name == "STSVITA.vpk" or .name == "STSVITA-slim.vpk" or .name == "build-manifest.json" or .name == "STSVITA.map") | .id' "$release_json")
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -175,29 +209,72 @@ jobs:
           cp build/native/STSVITA.map build/STSVITA.map
           ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map
 
-      - name: Resolve native allocator caller address
+      - name: Disassemble and map vitaGL reserve callsites
         run: |
           set -euo pipefail
-          test -s build/native/STSVITA
-          {
-            echo "Runtime caller address: 0x8158dda3"
-            arm-vita-eabi-addr2line -f -C -e build/native/STSVITA 0x8158dda3 || true
-            echo
-            echo "Nearest native symbols:"
-            arm-vita-eabi-nm -n -C build/native/STSVITA | awk '$1 ~ /^[0-9a-fA-F]+$/ { print }' > build/native/STSVITA.symbols.txt
-            grep -B 8 -A 8 -i '8158dda3' build/native/STSVITA.symbols.txt || true
-          } > build/native/STSVITA.address-report.txt
-          cat build/native/STSVITA.address-report.txt
+          pacman -Q | grep -i '^vitagl ' > build/native/STSVITA.vitagl-version.txt || true
+          arm-vita-eabi-objdump -d -C --line-numbers build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<__wrap_vgl_reserve_data_pool>' > build/native/STSVITA.reserve-callers.txt || true
+          arm-vita-eabi-objdump -d -C --disassemble=__wrap_vgl_reserve_data_pool build/native/STSVITA > build/native/STSVITA.reserve-wrapper.txt
+          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<vgl_reserve_data_pool>' > build/native/STSVITA.direct-reserve-calls.txt || true
+          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' > build/native/STSVITA.alloc-callers.txt || true
+          python3 - <<'PY'
+          import re
+          import subprocess
+          from pathlib import Path
 
-      - name: Disassemble native allocator callsite
-        run: |
-          set -euo pipefail
-          arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x8158dd70 --stop-address=0x8158de80 build/native/STSVITA > build/native/STSVITA.cff-callsite.txt
-          arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x81500520 --stop-address=0x8150070c build/native/STSVITA > build/native/STSVITA.reserve-wrapper.txt
-          arm-vita-eabi-objdump -d -C --line-numbers --start-address=0x8150ff70 --stop-address=0x81510180 build/native/STSVITA > build/native/STSVITA.draw-caller.txt
-          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 8 -A 8 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' > build/native/STSVITA.alloc-callers.txt || true
-          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<__wrap_vgl_reserve_data_pool>' > build/native/STSVITA.reserve-callers.txt || true
-          cat build/native/STSVITA.cff-callsite.txt
+          binary = "build/native/STSVITA"
+          proc = subprocess.Popen(
+              ["arm-vita-eabi-objdump", "-d", "-C", binary],
+              stdout=subprocess.PIPE, text=True
+          )
+          current = "?"
+          current_start = 0
+          wrapped = []
+          bypass = []
+          for line in proc.stdout:
+              symbol = re.match(r"^\s*([0-9a-fA-F]+) <(.+)>:\s*$", line)
+              if symbol:
+                  current_start = int(symbol.group(1), 16)
+                  current = symbol.group(2).removesuffix("()")
+                  continue
+              call = re.match(
+                  r"^\s*([0-9a-fA-F]+):\s+.*\bblx?\s+.*<(__wrap_vgl_reserve_data_pool|vgl_reserve_data_pool)>",
+                  line
+              )
+              if not call:
+                  continue
+              address = int(call.group(1), 16)
+              target = call.group(2)
+              entry = (address, address + 4, current, address - current_start)
+              if target == "__wrap_vgl_reserve_data_pool":
+                  wrapped.append(entry)
+              elif current != "__wrap_vgl_reserve_data_pool":
+                  bypass.append(entry)
+          if proc.wait() != 0:
+              raise SystemExit("objdump failed while resolving reserve callsites")
+
+          lines = ["VitaGL package:"]
+          version = Path("build/native/STSVITA.vitagl-version.txt")
+          lines.extend(version.read_text().splitlines() if version.exists() else ["not reported"])
+          lines.append("")
+          lines.append(f"wrapped vgl_reserve_data_pool callsites: {len(wrapped)}")
+          for call, ret, function, offset in wrapped:
+              lines.append(
+                  f"call=0x{call:08x} return=0x{ret:08x} "
+                  f"function={function} function_offset=0x{offset:x}"
+              )
+          lines.append("")
+          lines.append(f"direct calls to real vgl_reserve_data_pool outside wrapper: {len(bypass)}")
+          for call, ret, function, offset in bypass:
+              lines.append(
+                  f"UNWRAPPED call=0x{call:08x} return=0x{ret:08x} "
+                  f"function={function} function_offset=0x{offset:x}"
+              )
+          Path("build/native/STSVITA.reserve-caller-symbols.txt").write_text(
+              "\n".join(lines) + "\n"
+          )
+          print("\n".join(lines))
+          PY
           cat build/native/STSVITA.reserve-wrapper.txt
 
       - name: Upload native callsite disassembly
@@ -205,11 +282,10 @@ jobs:
         with:
           name: native-callsite-disassembly
           path: |
-            build/native/STSVITA.cff-callsite.txt
-            build/native/STSVITA.alloc-callers.txt
             build/native/STSVITA.reserve-callers.txt
             build/native/STSVITA.reserve-wrapper.txt
-            build/native/STSVITA.draw-caller.txt
+            build/native/STSVITA.direct-reserve-calls.txt
+            build/native/STSVITA.alloc-callers.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -218,8 +294,8 @@ jobs:
         with:
           name: native-address-symbol-report
           path: |
-            build/native/STSVITA.address-report.txt
-            build/native/STSVITA.symbols.txt
+            build/native/STSVITA.reserve-caller-symbols.txt
+            build/native/STSVITA.vitagl-version.txt
           if-no-files-found: error
           retention-days: 1
 
@@ -257,41 +333,6 @@ jobs:
               f"full_assets_match_staging={manifest['validation']['full_assets_match_staging']}"
           )
           PY
-
-      - name: Upload full VPK and build manifest to private release
-        env:
-          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
-          api="https://api.github.com/repos/teststs1111/stspsvita-build-private"
-          release_json="$RUNNER_TEMP/private-release.json"
-          release_status="$(curl --silent --show-error -o "$release_json" -w '%{http_code}' \
-            -H "Authorization: Bearer $STS_BUILD_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$api/releases/tags/temp-build-1")"
-          if [ "$release_status" != "200" ]; then
-            echo "Private Release API returned HTTP $release_status"
-            jq -r '.message // "No API error message returned"' "$release_json"
-            exit 1
-          fi
-          upload_url="$(jq -r '.upload_url' "$release_json" | sed 's/{?name,label}//')"
-          for asset in STSVITA.vpk build-manifest.json STSVITA.map; do
-            asset_id="$(jq -r --arg name "$asset" '.assets[]? | select(.name==$name) | .id' "$release_json" | head -n1)"
-            if [ -n "$asset_id" ] && [ "$asset_id" != "null" ]; then
-              curl --fail --silent --show-error -X DELETE \
-                -H "Authorization: Bearer $STS_BUILD_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "$api/releases/assets/$asset_id"
-            fi
-            curl --fail --silent --show-error -X POST \
-              -H "Authorization: Bearer $STS_BUILD_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"build/$asset" \
-              "$upload_url?name=$asset" > "$RUNNER_TEMP/upload-$asset.json"
-            echo "Uploaded private asset $asset ($(stat -c%s "build/$asset") bytes)"
-          done
 
       - name: Remove game input and generated game-derived files
         if: always()
