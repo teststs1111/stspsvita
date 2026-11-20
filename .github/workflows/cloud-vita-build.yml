@@ -212,6 +212,7 @@ jobs:
       - name: Disassemble and map vitaGL reserve callsites (Thumb LR)
         run: |
           set -euo pipefail
+          # Thumb BL sets LR to (call + 4) | 1; report caller= to match the wrapper's saved LR.
           vdpm info vitaGL | awk '/^[[:space:]]*(Name|Version)[[:space:]]*:/ { print }' > build/native/STSVITA.vitagl-version.txt
           grep -qi '^Version[[:space:]]*:' build/native/STSVITA.vitagl-version.txt
           arm-vita-eabi-objdump -d -C --line-numbers build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<__wrap_vgl_reserve_data_pool>' > build/native/STSVITA.reserve-callers.txt || true

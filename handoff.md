@@ -331,3 +331,9 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 
 ## Reserve-callsite helper follow-up (2026-11-20)
 - A local review immediately after the first helper commit caught over-escaped regular-expression and newline literals in the new Python script before treating its CI result as valid. Corrected the helper source and regression fixture; the corrected three-case unit suite passes locally. The first push's workflow attempt should not be used as validation. The corrected push triggers fresh host/Vita workflows; report only their confirmed conclusions.
+
+
+## Thumb LR parser CI follow-up (2026-11-20)
+- The first parser push `9913d3b3f2c32a54ed39e0e5ebdea5af64deb673` failed host run `44741465549`: the embedded raw-string regexes were over-escaped, so all three new parser tests found zero callsites. This was caught from the actual job log and not counted as validation.
+- Corrected in `89a0bd5b56bd3d8d5ccb0e26fbcc13aea4b02ee9`. Host run `44741620834` completed successfully: `bash -n build.sh`, `./build.sh --help`, `make test`, 56 Python tests, Java `FramePacingStatsTest`, and the native spill-tracker C test.
+- Added a short workflow comment documenting the Thumb LR rule. This triggers a fresh VitaSDK workflow so the corrected helper is exercised against the full native binary and the version metadata path; do not count the earlier in-flight Vita run `44741465453` because it checked out the over-escaped helper.
