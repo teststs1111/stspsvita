@@ -7,12 +7,14 @@ public final class FrameTraceBufferTest {
         FrameTraceBuffer trace = new FrameTraceBuffer(0L);
         check(!trace.shouldDump(99_999L, 0L), "dumped below threshold");
         trace.record(16_000L, 1_000L, 5_000L, 10_000L,
-                100L, 200L, 300L, 400L, 500L, 600L, 700L);
+                2507L, 2003L, 3001L, 4002L, 5004L, 6005L, 7006L);
         check(trace.shouldDump(100_000L, 0L), "first slow frame not dumped");
         String first = trace.dumpRecent();
         contains(first, "[frame-trace] recent=1 capacity=8");
         contains(first, "#0 frame=16.0ms");
         contains(first, "game=5.0ms");
+        contains(first, "ft=2ms/507 calls");
+        contains(first, "io=6ms/5 calls");
         check(!trace.shouldDump(200_000L, 1_999_999L),
                 "dump rate limit ignored");
         check(trace.shouldDump(200_000L, 2_000_000L),
