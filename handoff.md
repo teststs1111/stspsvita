@@ -361,3 +361,13 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Added host regression coverage for threshold/rate limiting and circular-buffer wraparound; `make test` now compiles/runs both frame stats test classes.
 - This is diagnostic-only: no game state, rendering, audio, VSync, frame limiter, asset loading, or save behavior is changed.
 - Pending verification: host CI and Vita cloud build on the updated branch; then physical Vita test should confirm no perceptible impact and produce a log with `[frame-trace]` entries during stalls. Do not claim performance impact is zero until measured on hardware.
+
+
+## Frame-trace verification update (2026-11-21)
+- Final source commit for the diagnostic code: `62a457236dca5f9a449f39ec31be2e16dd67a0bd`.
+- The frame history stores 8 frames × 11 primitive values (704 bytes of value storage), with no per-frame formatting or file I/O. It triggers at >=100ms and is rate-limited to one trace per 2 seconds.
+- Packed native/file counters retain both elapsed milliseconds and call counts in the trace output.
+- To avoid two synchronous stderr flushes for one slow frame, the trace and existing >200ms hitch report are combined into one log write when both apply.
+- Host CI run `44793011499` passed: 56 Python tests, `FramePacingStatsTest`, and `FrameTraceBufferTest`.
+- A malformed, duplicated settings-bytecode-inspection fragment in the cloud workflow was causing GitHub Actions to reject the workflow before creating a job. Restored the complete workflow from known-good build commit `21b91f8705c8156a6463b895228e5afdf89bffbd`; this removed only the broken/duplicated inspection remnants and restored the valid Vita build job.
+- Vita build run `44793011314` is in progress on the final diagnostic source commit. No new VPK has been delivered yet. After a successful build, physical Vita testing is still required to assess any perceptible overhead and verify that `[frame-trace]` entries appear during slow frames.
