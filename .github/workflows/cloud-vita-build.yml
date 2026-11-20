@@ -199,20 +199,6 @@ jobs:
           echo "JAR archive listing (first 20 entries):"
           sed -n '1,20p' "$RUNNER_TEMP/sts-input/jar-entries.txt"
 
-      - name: Inspect settings UI bytecode without exposing game files
-        env:
-          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
-        run: |
-          set -euo pipefail
-          jar="$RUNNER_TEMP/sts-input/desktop-1.0.jar"
-          report="$RUNNER_TEMP/sts-input/settings-ui-inspection.txt"
-          {
-            echo "Settings UI inspection metadata"
-            echo "Input SHA-256:"
-            sha256sum "$jar"
-            echo
-            echo "Candidate class names:"
-            grep -E '(^|/)(Options|Settings|.*Options.*|.*Settings.*)\\.class
       - name: Build VPK packages
         run: |
           set -euo pipefail
