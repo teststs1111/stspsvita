@@ -25,8 +25,8 @@ public final class FrameTraceBufferTest {
         String wrapped = trace.dumpRecent();
         contains(wrapped, "recent=8 capacity=8");
         check(!wrapped.contains("#2 "), "oldest entry was not overwritten");
+        contains(wrapped, "#3 frame=3.0ms");
         contains(wrapped, "#10 frame=10.0ms");
-        contains(wrapped, "#17 frame=0.0ms");
         System.out.println("FrameTraceBufferTest: PASS");
     }
 
