@@ -82,7 +82,9 @@ public class VitaApplication implements Application {
         // The [hitch] trace below is intentionally reserved for >200ms stalls.
         // Track a five-second frame-time distribution and phase averages/maxima.
         // This makes sub-200ms pacing misses attributable without per-frame logs.
-        FramePacingStats framePacing = new FramePacingStats(VitaNatives.micros());
+        long traceStartMicros = VitaNatives.micros();
+        FramePacingStats framePacing = new FramePacingStats(traceStartMicros);
+        FrameTraceBuffer frameTrace = new FrameTraceBuffer(traceStartMicros);
         while (running) {
             long hitchStart = VitaNatives.micros();
             long wallStart = VitaNatives.wallMicros();
@@ -114,6 +116,11 @@ public class VitaApplication implements Application {
             long up = VitaNatives.uploadFrameStats();
             long io = VitaFileHandle.drainIoStats();   // ALL reads, incl. the
             long stat = VitaFileHandle.drainStatStats(); // sub-100ms tail
+            frameTrace.record(frameDurationMicros, preMicros, gameMicros,
+                    swapMicros, ft, subtex, stb, dxt, up, io, stat);
+            if (frameTrace.shouldDump(frameDurationMicros, frameEnd)) {
+                VitaNatives.log(frameTrace.dumpRecent());
+            }
             if (frameMs > 200L) {
                 // wall >> process means the console was suspended/minimized
                 // mid-frame, not a real stall (process time pauses, RTC not).
