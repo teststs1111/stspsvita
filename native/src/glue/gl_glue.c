@@ -75,6 +75,9 @@ void stsv_show_loading_screen(void) {
                 reason ? reason : "unknown decode error");
     }
 
+    /* Include the one GL1 immediate-mode loading-screen draw in the same
+     * high-water history as Java frames. */
+    stsv_legacy_pool_sample_frame();
     vglSwapBuffers(GL_FALSE);
 
     /* The displayed pixels live in the swapchain, so the temporary RGBA
