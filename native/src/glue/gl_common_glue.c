@@ -506,10 +506,12 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     void *caller = __builtin_return_address(0);
     void *result;
     if (pool_index_valid && overflow) {
-        /* Match vitaGL's pool bump, but avoid mark_as_dirty(NULL): its GC
-         * stops at the first NULL and would strand later queued frees. */
+        /* An overflow consumes the rest of this frame's circular pool.
+         * Keep the cursor at its end instead of advancing beyond it: repeated
+         * failed 8 MiB requests otherwise wrap the 32-bit pointer into a
+         * low address and corrupt subsequent reserve decisions. */
         circular_data_pool_ptr[idx] =
-                (unsigned char *) (before + (uintptr_t) size);
+                (unsigned char *) stsv_reserve_pool_advance(before, limit, size);
         result = stsv_reserve_overflow_alloc(size, vglForceAlloc, vglLazyFree);
     } else {
         result = __real_vgl_reserve_data_pool(size);

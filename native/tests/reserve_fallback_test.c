@@ -34,6 +34,15 @@ static void test_pool_boundary_matches_vitagl(void) {
     assert(!stsv_reserve_pool_overflow(0x1000u, 0x2000u, 0u));
 }
 
+static void test_pool_cursor_saturates_after_overflow(void) {
+    assert(stsv_reserve_pool_advance(0x1000u, 0x2000u, 0x400u) == 0x1400u);
+    assert(stsv_reserve_pool_advance(0x1000u, 0x2000u, 0x1000u) == 0x2000u);
+    assert(stsv_reserve_pool_advance(0x1000u, 0x2000u, 0x1001u) == 0x2000u);
+    assert(stsv_reserve_pool_advance(0x2001u, 0x2000u, 1u) == 0x2000u);
+    assert(stsv_reserve_pool_advance(UINTPTR_MAX - 0x10u, 0x2000u, 0x100u)
+            == 0x2000u);
+}
+
 static void test_success_is_deferred_once(void) {
     reset();
     void *ptr = stsv_reserve_overflow_alloc(8192u, fake_alloc, fake_defer_free);
@@ -62,6 +71,7 @@ static void test_missing_defer_callback_does_not_allocate(void) {
 
 int main(void) {
     test_pool_boundary_matches_vitagl();
+    test_pool_cursor_saturates_after_overflow();
     test_success_is_deferred_once();
     test_failed_alloc_is_not_enqueued();
     test_missing_defer_callback_does_not_allocate();
