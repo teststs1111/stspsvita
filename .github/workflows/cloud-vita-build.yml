@@ -282,6 +282,39 @@ jobs:
           )
           PY
 
+      - name: Publish VPKs and matching diagnostics to private Release
+        env:
+          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
+          api="https://api.github.com/repos/teststs1111/stspsvita-build-private"
+          release_json="$RUNNER_TEMP/private-release-upload.json"
+          status="$(curl --silent --show-error -o "$release_json" -w '%{http_code}' \
+            -H "Authorization: Bearer $STS_BUILD_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$api/releases/tags/temp-build-1")"
+          if [ "$status" != "200" ]; then
+            echo "Private Release lookup failed with HTTP $status"
+            jq -r '.message // "No API error message returned"' "$release_json"
+            exit 1
+          fi
+          upload_url="$(jq -r '.upload_url' "$release_json" | sed 's/{?name,label}$//')"
+          test -n "$upload_url" && test "$upload_url" != "null"
+          for asset in build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map build/build-manifest.json; do
+            test -s "$asset"
+            name="$(basename "$asset")"
+            echo "Uploading private asset: $name ($(stat -c%s "$asset") bytes)"
+            curl --fail --location --silent --show-error \
+              -X POST \
+              -H "Authorization: Bearer $STS_BUILD_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$asset" \
+              "$upload_url?name=$name"
+            sha256sum "$asset"
+          done
+
       - name: Remove game input and generated game-derived files
         if: always()
         run: |
