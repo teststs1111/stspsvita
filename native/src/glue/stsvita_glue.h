@@ -41,6 +41,10 @@ void stsv_tex_note_path(const void *utf8, int32_t len);
  * (gl_common_glue.c). The label is UTF-8 and need not be NUL-terminated. */
 void stsv_transition_diag(const void *utf8, int32_t len);
 
+/* Sample the legacy immediate-mode scratch high-water before vitaGL rotates
+ * the circular pool at swap time. Read-only; no per-frame logging. */
+void stsv_legacy_pool_sample_frame(void);
+
 /* sceImeDialog on-screen keyboard (ime_glue.c; host stubs in host_glue.c).
  * title/initial are NUL-terminated UTF-16 (Java chars); poll() once per
  * frame: 0=idle/running 1=text entered 2=canceled. */

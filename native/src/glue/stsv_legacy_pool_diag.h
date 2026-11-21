@@ -52,4 +52,31 @@ static inline stsv_legacy_pool_usage stsv_legacy_pool_measure(
     return usage;
 }
 
+typedef struct {
+    uintptr_t last_used_bytes;
+    uintptr_t peak_used_bytes;
+    uint32_t last_frame;
+    uint32_t valid_frames;
+    uint32_t overrun_frames;
+} stsv_legacy_pool_history;
+
+/* Accumulate one completed frame without allocation, logging, or pointer
+ * dereferences. Invalid/stale snapshots are deliberately ignored. */
+static inline void stsv_legacy_pool_history_record(
+        stsv_legacy_pool_history *history,
+        stsv_legacy_pool_usage usage, uint32_t frame) {
+    if (history == 0 || !usage.valid) {
+        return;
+    }
+    history->last_used_bytes = usage.used_bytes;
+    history->last_frame = frame;
+    history->valid_frames++;
+    if (usage.used_bytes > history->peak_used_bytes) {
+        history->peak_used_bytes = usage.used_bytes;
+    }
+    if (usage.overrun) {
+        history->overrun_frames++;
+    }
+}
+
 #endif

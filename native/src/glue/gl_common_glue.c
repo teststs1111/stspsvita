@@ -244,6 +244,20 @@ extern int legacy_pool_size;
 static uintptr_t stsv_legacy_pool_base;
 static uint32_t stsv_legacy_pool_reserved_size;
 static uint32_t stsv_legacy_pool_frame;
+static stsv_legacy_pool_history stsv_legacy_pool_history_stats;
+
+/* Called once at the Java frame boundary, immediately before vglSwapBuffers
+ * rotates the circular pool. The history keeps only scalar high-water data. */
+void stsv_legacy_pool_sample_frame(void) {
+    uint32_t frame = vglGetFrameNumber();
+    uint32_t configured_legacy_size = legacy_pool_size > 0
+            ? (uint32_t) legacy_pool_size : 0;
+    stsv_legacy_pool_usage usage = stsv_legacy_pool_measure(
+            stsv_legacy_pool_base, stsv_legacy_pool_reserved_size,
+            (uintptr_t) legacy_pool, (uintptr_t) legacy_pool_ptr,
+            configured_legacy_size, stsv_legacy_pool_frame, frame);
+    stsv_legacy_pool_history_record(&stsv_legacy_pool_history_stats, usage, frame);
+}
 
 static void stsv_diag_memory(const char *event) {
     struct mallinfo mi = mallinfo();
@@ -264,6 +278,8 @@ static void stsv_diag_memory(const char *event) {
             "legacy_size=%u legacy_reserved=%u legacy_frame=%u "
             "legacy_current_frame=%u legacy_used=%lu "
             "legacy_remaining=%lu legacy_overrun=%d legacy_valid=%d "
+            "legacy_samples=%u legacy_last_frame=%u legacy_last_used=%lu "
+            "legacy_peak_used=%lu legacy_overrun_frames=%u "
             "newlib_free=%luKB used=%luKB arena=%luKB top=%luKB blocks=%lu "
             "kernel_free_rc=0x%08x user=%dKB cdram=%dKB phycont=%dKB\n",
             event,
@@ -283,6 +299,11 @@ static void stsv_diag_memory(const char *event) {
             (unsigned long) legacy.remaining_bytes,
             legacy.overrun,
             legacy.valid,
+            stsv_legacy_pool_history_stats.valid_frames,
+            stsv_legacy_pool_history_stats.last_frame,
+            (unsigned long) stsv_legacy_pool_history_stats.last_used_bytes,
+            (unsigned long) stsv_legacy_pool_history_stats.peak_used_bytes,
+            stsv_legacy_pool_history_stats.overrun_frames,
             (unsigned long) (mi.fordblks >> 10),
             (unsigned long) (mi.uordblks >> 10),
             (unsigned long) (mi.arena >> 10),
@@ -587,6 +608,9 @@ void __wrap_glDrawElements(GLenum mode, GLsizei count, GLenum type,
 #if !defined(__vita__) && !defined(VITA)
 /* Host: pools are unbounded, spilling never happens, everything fits. */
 void stsv_tex_spill_enable(void) {
+}
+
+void stsv_legacy_pool_sample_frame(void) {
 }
 
 void stsv_transition_diag(const void *utf8, int32_t len) {

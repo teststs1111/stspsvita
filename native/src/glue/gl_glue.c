@@ -92,6 +92,9 @@ void stsv_swap_buffers(void) {
     do {
         err = glGetError();
     } while (err != GL_NO_ERROR);
+    /* Capture this frame's legacy-pool high-water before vitaGL increments
+     * its frame number and rotates/resets the circular scratch pool. */
+    stsv_legacy_pool_sample_frame();
     /* While the sceImeDialog keyboard is up, the common dialog layer must be
      * composited over the frame (ime_glue.c). */
     vglSwapBuffers(stsv_ime_active() ? GL_TRUE : GL_FALSE);
