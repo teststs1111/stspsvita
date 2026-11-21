@@ -1,6 +1,7 @@
 #include "stsv_gl.h"
 #include "stsvita_glue.h"
 #include "stsv_spill_tracker.h"
+#include "stsv_reserve_fallback.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -442,15 +443,25 @@ static int stsv_should_log_large_reserve(const void *caller, uint32_t size) {
 
 void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     int idx = vgl_circular_idx;
+    int pool_index_valid = idx >= 0 && idx < 4;
     uintptr_t base = 0, before = 0, limit = 0;
-    if (idx >= 0 && idx < 4) {
+    if (pool_index_valid) {
         base = (uintptr_t) circular_data_pool[idx];
         before = (uintptr_t) circular_data_pool_ptr[idx];
         limit = (uintptr_t) circular_data_pool_limit[idx];
     }
-    int overflow = before > limit || (uintptr_t) size > limit - before;
+    int overflow = stsv_reserve_pool_overflow(before, limit, size);
     void *caller = __builtin_return_address(0);
-    void *result = __real_vgl_reserve_data_pool(size);
+    void *result;
+    if (pool_index_valid && overflow) {
+        /* Match vitaGL's pool bump, but avoid mark_as_dirty(NULL): its GC
+         * stops at the first NULL and would strand later queued frees. */
+        circular_data_pool_ptr[idx] =
+                (unsigned char *) (before + (uintptr_t) size);
+        result = stsv_reserve_overflow_alloc(size, vglForceAlloc, vglLazyFree);
+    } else {
+        result = __real_vgl_reserve_data_pool(size);
+    }
     int invalid = result == NULL || (uintptr_t) result < UINT32_C(0x10000000);
     int trace = stsv_trace_current_draw;
     int large_sample = size >= (1u << 20)

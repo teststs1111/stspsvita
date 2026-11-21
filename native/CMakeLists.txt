@@ -87,9 +87,10 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 # gl_glue.c; the project renders its own loading frame immediately after init.
 target_link_options(${PROJECT_NAME} PRIVATE
   "SHELL:-Wl,--wrap=invoke_splashscreen"
-  # Diagnostic-only interception: vitaGL's custom-shader draw path does not
-  # check vgl_reserve_data_pool before memcpy. Keep the original behavior but
-  # report invalid fallback results and the first City draw sizes first.
+  # Preserve the circular-pool fast path. On overflow, route fallback
+  # allocation through vglForceAlloc/vglLazyFree so a failed allocation never
+  # inserts the NULL sentinel that terminates vitaGL's deferred-free scan.
+  # Caller/size diagnostics remain enabled; a NULL result is still returned.
   "SHELL:-Wl,--wrap=vgl_reserve_data_pool"
   "SHELL:-Wl,--wrap=glDrawElements"
   "SHELL:-Wl,--wrap=glBufferData"
