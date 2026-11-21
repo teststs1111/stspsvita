@@ -243,6 +243,7 @@ extern float *legacy_pool_ptr;
 extern int legacy_pool_size;
 static uintptr_t stsv_legacy_pool_base;
 static uint32_t stsv_legacy_pool_reserved_size;
+static uint32_t stsv_legacy_pool_frame;
 
 static void stsv_diag_memory(const char *event) {
     struct mallinfo mi = mallinfo();
@@ -253,13 +254,15 @@ static void stsv_diag_memory(const char *event) {
     stsv_legacy_pool_usage legacy = stsv_legacy_pool_measure(
             stsv_legacy_pool_base, stsv_legacy_pool_reserved_size,
             (uintptr_t) legacy_pool, (uintptr_t) legacy_pool_ptr,
-            configured_legacy_size);
+            configured_legacy_size, stsv_legacy_pool_frame,
+            vglGetFrameNumber());
     fprintf(stderr,
             "[act2-diag] mem event=%s "
             "pool_free=%lu/%lu/%luKB pool_total=%lu/%lu/%luKB "
             "spill=%luKB peak=%luKB "
             "legacy_base=%p legacy_pool=%p legacy_ptr=%p "
-            "legacy_size=%u legacy_reserved=%u legacy_used=%lu "
+            "legacy_size=%u legacy_reserved=%u legacy_frame=%u "
+            "legacy_current_frame=%u legacy_used=%lu "
             "legacy_remaining=%lu legacy_overrun=%d legacy_valid=%d "
             "newlib_free=%luKB used=%luKB arena=%luKB top=%luKB blocks=%lu "
             "kernel_free_rc=0x%08x user=%dKB cdram=%dKB phycont=%dKB\n",
@@ -274,7 +277,8 @@ static void stsv_diag_memory(const char *event) {
             (unsigned long) (stsv_spill_peak >> 10),
             (void *) stsv_legacy_pool_base, (void *) legacy_pool,
             (void *) legacy_pool_ptr, configured_legacy_size,
-            stsv_legacy_pool_reserved_size,
+            stsv_legacy_pool_reserved_size, stsv_legacy_pool_frame,
+            (unsigned int) vglGetFrameNumber(),
             (unsigned long) legacy.used_bytes,
             (unsigned long) legacy.remaining_bytes,
             legacy.overrun,
@@ -497,6 +501,7 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
          * into legacy_pool/legacy_pool_ptr. No pool or GL state is changed. */
         stsv_legacy_pool_base = (uintptr_t) result;
         stsv_legacy_pool_reserved_size = size;
+        stsv_legacy_pool_frame = vglGetFrameNumber();
     }
     int invalid = result == NULL || (uintptr_t) result < UINT32_C(0x10000000);
     int trace = stsv_trace_current_draw;

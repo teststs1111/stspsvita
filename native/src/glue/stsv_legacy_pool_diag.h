@@ -32,10 +32,12 @@ static inline int stsv_legacy_pool_is_scene_reset_caller(
 static inline stsv_legacy_pool_usage stsv_legacy_pool_measure(
         uintptr_t base, uint32_t reserved_size,
         uintptr_t draw_ptr, uintptr_t write_ptr,
-        uint32_t configured_size) {
+        uint32_t configured_size, uint32_t reserve_frame,
+        uint32_t current_frame) {
     stsv_legacy_pool_usage usage = {0, 0, 0, 0};
     if (base == 0 || reserved_size == 0
             || reserved_size != configured_size
+            || reserve_frame != current_frame
             || draw_ptr == 0 || write_ptr == 0
             || draw_ptr < base || write_ptr < base) {
         return usage;
