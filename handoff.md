@@ -371,3 +371,51 @@ User reports that the current Slay the Spire Vita build feels good in brief play
 - Host CI run `44793011499` passed: 56 Python tests, `FramePacingStatsTest`, and `FrameTraceBufferTest`.
 - A malformed, duplicated settings-bytecode-inspection fragment in the cloud workflow was causing GitHub Actions to reject the workflow before creating a job. Restored the complete workflow from known-good build commit `21b91f8705c8156a6463b895228e5afdf89bffbd`; this removed only the broken/duplicated inspection remnants and restored the valid Vita build job.
 - Vita build run `44793011314` is in progress on the final diagnostic source commit. No new VPK has been delivered yet. After a successful build, physical Vita testing is still required to assess any perceptible overhead and verify that `[frame-trace]` entries appear during slow frames.
+
+
+## 2026-11-21 — vitaGL reserve-failure GC queue guard
+
+### Runtime evidence recovered from existing logs
+
+Reviewed the Library logs `stsvita.log` and `stsvita(1).log`; no new device run was performed.
+
+- `stsvita.log` contains 68,410 lines and 67,128 `[act2-diag] draw-reserve` records.
+- In that older failure log, the 8 MiB request from caller `0x8155be5b` has 66,969 in-pool successes, 4 successful overflow fallbacks, and 34 failed overflow fallbacks. All 34 failures have `result=0`, `invalid=1`, `idx=1`, and `size=8388608`.
+- At the first failure snapshot: VRAM 95/96 MiB, RAM 70/78 MiB, PHYCONT 16/26 MiB, newlib free 2,974 KiB, newlib used 241,785 KiB of a 244,760 KiB arena. The same log window contains a PNG decode failure and `sound pcm malloc FAILED (7,862,828 bytes)`.
+- The newer `stsvita(1).log` has no `invalid=1` reserve records; most of its 8 MiB requests fit in the circular pool. Do not treat every 8 MiB reservation as a fallback allocation or a leak.
+
+### Source-level finding
+
+The VitaGL package used by the build is `0.0.0.r1488.g2bdbe89-1`, upstream commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`.
+
+- `source/vgl.c:137-143`: the circular-pool overflow path calls `gpu_alloc_mapped_for_cpu(size)` and unconditionally calls `mark_as_dirty(res)`, including when `res == NULL`.
+- `source/gxm.c:280-296`: the deferred-free collector stops at the first NULL list entry, then rotates/resets the list index. A NULL inserted by a failed reserve can therefore hide later non-NULL deferred frees in that list slot.
+- `source/vgl.c:577-595`: `scene_reset` allocates `legacy_pool_size` with `gpu_alloc_mapped_temp` and stores the result as the legacy pool pointer.
+- `native/src/main.c:83-84`: the application currently passes an 8 MiB `legacy_pool_size`.
+- `source/gxm.c:786-801`: circular-pool index rotation and pointer reset occur at frame end.
+- `source/vgl.c:577` / `source/vgl.c:735-739`: public `vglForceAlloc` and `vglLazyFree` expose the same mapped allocator and deferred-free operation needed to mirror the overflow path without enqueuing NULL.
+
+The old log's caller `0x8155be5b` cannot be proven against its original binary because artifact `14478524832` has expired. The current binary maps its `scene_reset` reserve call to `0x815288e6` (Thumb LR `0x815288eb`, function offset `0x13a`); the return is stored as the legacy pool and pool pointer without a NULL check. The matching 8 MiB size makes `scene_reset` a strong candidate for the old caller, but this remains unconfirmed until a log and symbol map come from the same build.
+
+### Completed fix
+
+Code commit: `4d343e8660044bd79823ce7fd2519ab6106b725f`.
+
+- `native/src/glue/gl_common_glue.c` now keeps the original `__real_vgl_reserve_data_pool` fast path for in-pool requests.
+- For a valid circular-pool index and an overflow request, it advances the pool pointer by the same requested size, calls `vglForceAlloc(size)`, and calls `vglLazyFree(ptr)` only when the allocation succeeded.
+- A failed overflow allocation still returns NULL to the caller; this does not fabricate memory or prevent a caller-side NULL dereference. It specifically prevents `mark_as_dirty(NULL)` from truncating later deferred frees.
+- Added `native/src/glue/stsv_reserve_fallback.h` and `native/tests/reserve_fallback_test.c`; the tests cover pool-boundary semantics, successful deferred free, failed allocation not being enqueued, and missing callbacks.
+- Updated the CMake comment and `make test` target.
+
+### Validation
+
+- Host CI run `44903169338`, job `136843156289`: success. Confirmed `bash -n build.sh`, `./build.sh --help`, and `make test`; 56 Python tests and both Java tests passed. The C spill-tracker and reserve-fallback tests are part of the successful `make test` command.
+- VitaSDK build run `44903169358`, job `136843156567`: success, including native compile/link and cleanup. The linker map contains `vglForceAlloc`, `vglLazyFree`, and `__wrap_vgl_reserve_data_pool`. The current binary reports 87 wrapped VitaGL callsites; the only direct references to the real reserve function are the wrapper's own fast-path branches.
+- Diagnostic artifacts: callsite disassembly `14707535237`, symbol report `14707341236`, linker map `14706519533`. No VPK or game-derived artifact was uploaded; the workflow's cleanup step completed.
+
+### Remaining work / next concrete task
+
+1. Extend the existing `[act2-diag] mem` or reserve record with read-only `legacy_pool`, `legacy_pool_ptr`, and `legacy_pool_size` usage (the current linker map exports these symbols). This will establish whether the 8 MiB legacy pool is actually consumed before considering any change to its size.
+2. Obtain a same-build runtime log to map the failing reserve caller exactly and verify whether repeated scene resets are occurring without a frame-pool rotation.
+3. Determine why the newlib/VRAM pools are already near exhaustion before the first failed 8 MiB fallback. The queue guard is a defensive lifetime fix, not a demonstrated cure for the initial exhaustion. Do not change pool sizes or disable the legacy pool until its use is measured.
+4. Continue to preserve visual/audio quality; no real-device success is claimed.
