@@ -419,3 +419,37 @@ Code commit: `4d343e8660044bd79823ce7fd2519ab6106b725f`.
 2. Obtain a same-build runtime log to map the failing reserve caller exactly and verify whether repeated scene resets are occurring without a frame-pool rotation.
 3. Determine why the newlib/VRAM pools are already near exhaustion before the first failed 8 MiB fallback. The queue guard is a defensive lifetime fix, not a demonstrated cure for the initial exhaustion. Do not change pool sizes or disable the legacy pool until its use is measured.
 4. Continue to preserve visual/audio quality; no real-device success is claimed.
+
+
+## 2026-11-21: measure vitaGL legacy-pool consumption
+
+Code commit: `c65cffff2c1c0f8d0f64276306e35f61e7ebf294` (preceded by `f0e38692bc264973b13c1cbf79b54c1ed107523a`).
+
+### Source and binary evidence
+
+- Pinned vitaGL package: `0.0.0.r1488.g2bdbe89-1`.
+- The previous native linker map (Vita build run `44903169358`, artifact `14706519533`) places `scene_reset` at `0x815287ac` and the next function, `vglSetupGarbageCollector`, at `0x81528e20`.
+- `reserve-callers.txt` (artifact `14707535237`) shows the `scene_reset` call at `0x815288e6` to `__wrap_vgl_reserve_data_pool`; Thumb LR is `0x815288eb`. The linker map exports `legacy_pool_size`, `legacy_pool`, and `legacy_pool_ptr`. It does not export `legacy_pool_end` in this build, so diagnostics must not depend on that optional symbol.
+- Pinned VitaGL source: `source/gxm.c` allocates `legacy_pool_size` with `gpu_alloc_mapped_temp()` during `scene_reset`, then resets `legacy_pool` and `legacy_pool_ptr` to the returned base. `source/utils/gpu_utils.h` shows that circular-pool mode implements `gpu_alloc_mapped_temp(size)` as `vgl_reserve_data_pool(size)`.
+- `source/ffp.c` advances `legacy_pool_ptr` as `glVertex3f` emits vertices and advances `legacy_pool` after the immediate-mode draw. The furthest of these pointers is therefore the current high-water offset from the captured base.
+- The Vita application configures an 8 MiB legacy pool. This is a per-scene/per-frame circular scratch reservation, not a persistent heap allocation. It can reduce the scratch space available to other temporary buffers and can trigger overflow fallback; it is not, by itself, evidence of a retained-memory leak.
+
+### Diagnostic change
+
+- `native/src/glue/gl_common_glue.c` now captures the returned base only when the wrapped caller lies in the linked `scene_reset` function range and the requested size equals `legacy_pool_size`. The range uses the pinned binary's adjacent `scene_reset` / `vglSetupGarbageCollector` symbols rather than a hard-coded absolute address.
+- Existing `[act2-diag] mem` snapshots now report `legacy_base`, `legacy_pool`, `legacy_ptr`, `legacy_size`, `legacy_reserved`, `legacy_frame`, `legacy_current_frame`, `legacy_used`, `legacy_remaining`, `legacy_overrun`, and `legacy_valid`.
+- The snapshot is marked invalid if the captured reserve is from a different `vglGetFrameNumber()`, preventing stale pointers from a previous circular-pool frame from being interpreted as current usage.
+- The instrumentation only reads existing globals and stores the reserve result for later measurement. It does not change allocation sizes, GL state, rendering, audio, or gameplay.
+- Added `native/src/glue/stsv_legacy_pool_diag.h` and `native/tests/legacy_pool_diag_test.c`; tests cover Thumb LR range matching, furthest-pointer accounting, exact capacity, overrun, invalid snapshots, and stale-frame rejection. `Makefile` includes the new C test in `make test`.
+
+### Validation
+
+- Host CI run `44905794764`, job `136850964376`: success. Confirmed `bash -n build.sh`, `./build.sh --help`, and `make test`; 56 Python tests, both Java tests, and the C regression-test commands completed successfully.
+- VitaSDK build run `44905794828`, job `136850987137`: **in progress at handoff update**. The job has installed VitaSDK and fetched the existing private build input; VPK generation/native compile-link and the fresh linker map are still pending. Do not treat the build or new symbol references as verified until this run completes.
+- The workflow is configured to upload only native diagnostic reports and to remove the JAR and generated game-derived trees. No VPK or game-derived asset is published or retained as a workflow artifact.
+
+### Next concrete task
+
+1. Confirm VitaSDK compile/link for `c65cffff` and inspect the new linker map/disassembly to verify the `scene_reset` function range and the `vglGetFrameNumber` reference resolve.
+2. If the build succeeds, the remaining evidence for this path is a same-build Vita runtime log. Compare `legacy_used` with 8 MiB at Act transitions and correlate `draw-reserve` caller/size/fallback results. Do not reduce the pool or change other memory budgets until this usage is measured.
+3. A physical Vita run is not yet confirmed. Never infer device success from build or host tests.
