@@ -126,7 +126,11 @@ test:
 	    -I native/src/glue native/tests/reserve_fallback_test.c \
 	    -o build/reserve-fallback-test; \
 	  build/reserve-fallback-test; \
-	  rm -f build/spill-tracker-test build/reserve-fallback-test
+	  $(CC) -std=c11 -Wall -Wextra -Werror \
+	    -I native/src/glue native/tests/legacy_pool_diag_test.c \
+	    -o build/legacy-pool-diag-test; \
+	  build/legacy-pool-diag-test; \
+	  rm -f build/spill-tracker-test build/reserve-fallback-test build/legacy-pool-diag-test
 
 # Reproducible clean. All game-derived and generated build trees are reset;
 # anything else under work/ is left alone.

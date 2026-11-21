@@ -2,6 +2,7 @@
 #include "stsvita_glue.h"
 #include "stsv_spill_tracker.h"
 #include "stsv_reserve_fallback.h"
+#include "stsv_legacy_pool_diag.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -233,14 +234,33 @@ static GLsizei stsv_current_draw_count;
 static GLenum stsv_current_draw_type;
 static const GLvoid *stsv_current_draw_indices;
 
+/* Pinned vitaGL r1488 exposes these internal globals in its linked image.
+ * scene_reset is immediately followed by vglSetupGarbageCollector in the
+ * verified linker map; the range identifies its legacy-pool reserve call. */
+extern void scene_reset(void);
+extern float *legacy_pool;
+extern float *legacy_pool_ptr;
+extern int legacy_pool_size;
+static uintptr_t stsv_legacy_pool_base;
+static uint32_t stsv_legacy_pool_reserved_size;
+
 static void stsv_diag_memory(const char *event) {
     struct mallinfo mi = mallinfo();
     SceKernelFreeMemorySizeInfo free_info = {sizeof(free_info), 0, 0, 0};
     int free_rc = sceKernelGetFreeMemorySize(&free_info);
+    uint32_t configured_legacy_size = legacy_pool_size > 0
+            ? (uint32_t) legacy_pool_size : 0;
+    stsv_legacy_pool_usage legacy = stsv_legacy_pool_measure(
+            stsv_legacy_pool_base, stsv_legacy_pool_reserved_size,
+            (uintptr_t) legacy_pool, (uintptr_t) legacy_pool_ptr,
+            configured_legacy_size);
     fprintf(stderr,
             "[act2-diag] mem event=%s "
             "pool_free=%lu/%lu/%luKB pool_total=%lu/%lu/%luKB "
             "spill=%luKB peak=%luKB "
+            "legacy_base=%p legacy_pool=%p legacy_ptr=%p "
+            "legacy_size=%u legacy_reserved=%u legacy_used=%lu "
+            "legacy_remaining=%lu legacy_overrun=%d legacy_valid=%d "
             "newlib_free=%luKB used=%luKB arena=%luKB top=%luKB blocks=%lu "
             "kernel_free_rc=0x%08x user=%dKB cdram=%dKB phycont=%dKB\n",
             event,
@@ -252,6 +272,13 @@ static void stsv_diag_memory(const char *event) {
             (unsigned long) (vglMemTotal(VGL_MEM_PHYCONT) >> 10),
             (unsigned long) (stsv_spill_used >> 10),
             (unsigned long) (stsv_spill_peak >> 10),
+            (void *) stsv_legacy_pool_base, (void *) legacy_pool,
+            (void *) legacy_pool_ptr, configured_legacy_size,
+            stsv_legacy_pool_reserved_size,
+            (unsigned long) legacy.used_bytes,
+            (unsigned long) legacy.remaining_bytes,
+            legacy.overrun,
+            legacy.valid,
             (unsigned long) (mi.fordblks >> 10),
             (unsigned long) (mi.uordblks >> 10),
             (unsigned long) (mi.arena >> 10),
@@ -461,6 +488,15 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
         result = stsv_reserve_overflow_alloc(size, vglForceAlloc, vglLazyFree);
     } else {
         result = __real_vgl_reserve_data_pool(size);
+    }
+    if (stsv_legacy_pool_is_scene_reset_caller(
+                (uintptr_t) caller, (uintptr_t) &scene_reset,
+                (uintptr_t) &vglSetupGarbageCollector, size,
+                legacy_pool_size > 0 ? (uint32_t) legacy_pool_size : 0)) {
+        /* Capture the frame-scratch allocation before scene_reset stores it
+         * into legacy_pool/legacy_pool_ptr. No pool or GL state is changed. */
+        stsv_legacy_pool_base = (uintptr_t) result;
+        stsv_legacy_pool_reserved_size = size;
     }
     int invalid = result == NULL || (uintptr_t) result < UINT32_C(0x10000000);
     int trace = stsv_trace_current_draw;
