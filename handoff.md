@@ -453,3 +453,52 @@ Code commit: `c65cffff2c1c0f8d0f64276306e35f61e7ebf294` (preceded by `f0e38692bc
 1. Confirm VitaSDK compile/link for `c65cffff` and inspect the new linker map/disassembly to verify the `scene_reset` function range and the `vglGetFrameNumber` reference resolve.
 2. If the build succeeds, the remaining evidence for this path is a same-build Vita runtime log. Compare `legacy_used` with 8 MiB at Act transitions and correlate `draw-reserve` caller/size/fallback results. Do not reduce the pool or change other memory budgets until this usage is measured.
 3. A physical Vita run is not yet confirmed. Never infer device success from build or host tests.
+
+
+## 2026-11-21 — Act-transition exhaustion evidence and reserve-cursor guard
+
+### Branch and commits
+- Working branch: `optimization/baseline-profiling` only.
+- Current source head before this handoff update: `9ce4d660b3932ec8e559eee81da1d5267fbd874e`.
+- `5d52625`: sample legacy-pool high-water at each Java frame boundary.
+- `de58bec`: include the startup GL1 loading-screen draw in that sampling.
+- `9ce4d66`: saturate the circular-pool cursor after an overflow instead of advancing it beyond the limit.
+- No changes to `main`, no PR/merge, and no game-derived outputs were uploaded or published.
+
+### New evidence from the existing device log
+The Library file `stsvita.log` (uploaded 2026-11-19, 68,410 lines) contains the failure sequence:
+- Line 60,567, `act1-complete boss-victory`: `newlib_free=3202KB`; pool free was `49/1431/9484KB` (VRAM/RAM/PHYCONT). VRAM was already essentially exhausted at the Act 1 boundary.
+- Line 68,341: PNG decode reported `bad png sig`; the same line reports heap arena 239MB, used 235MB, free 3MB, and Vita pools VRAM 95/96MB, RAM 70/78MB, PHYCONT 16/26MB.
+- Line 68,346: `sound pcm malloc FAILED (7862828 bytes)`.
+- Line 68,347: an 8MiB reserve overflow returned a temporary address, while the circular cursor wrapped from `0xffc91ad0 + 8MiB` to `0x491ad0`.
+- Lines 68,348 onward: subsequent 8MiB reserve attempts returned NULL; the memory snapshot reports `newlib_free=2974KB` and `pool_free=49/6615/6412KB`. No individual GPU pool had 8MiB free, and newlib had less than the 7.5MiB PCM request.
+- The log ends during repeated reserve failures; it contains no clean shutdown record. This is strong evidence of capacity/contiguous-allocation exhaustion, but does not prove a leak or identify the allocation owner.
+
+The later `stsvita(2).log` (2026-11-20) is a short clean quit and does not reproduce the Act-transition failure.
+
+### Reserve-cursor fix
+The wrapper in `native/src/glue/gl_common_glue.c` previously set `circular_data_pool_ptr[idx] = before + size` even after detecting overflow. Repeated failed 8MiB requests can therefore wrap the 32-bit cursor into a low address. The wrapper now uses `stsv_reserve_pool_advance()` from `native/src/glue/stsv_reserve_fallback.h`, which saturates the cursor at the pool limit on overflow. Successful in-pool reservations are unchanged; subsequent requests still use the existing external fallback. This prevents cursor wrap/corruption but does **not** create memory or guarantee that a fallback allocation succeeds.
+
+Regression coverage was added in `native/tests/reserve_fallback_test.c` for exact-boundary, oversized, already-over-limit, and near-`UINTPTR_MAX` cursor values.
+
+### Legacy-pool measurement
+Pinned VitaGL revision remains `0.0.0.r1488.g2bdbe89-1` (source commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`).
+- Default circular pool: 32MiB split across 3 display buffers, about 10.67MiB per buffer.
+- `native/src/main.c` passes an 8MiB legacy pool size to `vglInitExtended`.
+- VitaGL `scene_reset` allocates this pool with `gpu_alloc_mapped_temp(legacy_pool_size)` when beginning a new scene; `ffp.c` uses the pool for GL1 immediate-mode vertices. GL20 draw paths also trigger scene reset, even when they do not use the legacy vertex pool.
+- Therefore the 8MiB reservation consumes about 75% of each circular buffer and leaves about 2.67MiB for other temporary allocations. This is a plausible pressure source, not yet proven to be the caller in the old log. Do not reduce `legacy_pool_size` until measured usage is available.
+
+The new read-only sampler records last/peak legacy bytes, valid samples, and overrun frames in the existing `[act2-diag] mem` snapshot. It samples before both Java-frame swaps and the startup loading-screen swap, with no per-frame logging or allocation. Fields: `legacy_samples`, `legacy_last_frame`, `legacy_last_used`, `legacy_peak_used`, `legacy_overrun_frames`.
+
+### Validation
+- Host CI run `44908601910` for source commit `9ce4d660b3932ec8e559eee81da1d5267fbd874e`: success.
+- Confirmed commands: `bash -n build.sh`, `./build.sh --help`, `make test`.
+- `make test`: 56 Python tests, both Java timing tests, and the C spill-tracker, reserve-fallback, and legacy-pool diagnostics tests all completed successfully.
+- VitaSDK run `44907869400` for `de58bec` completed VPK package generation successfully, then was cancelled during callsite-disassembly after the next source commit arrived. It verified the legacy sampler compiles/links.
+- VitaSDK run `44908601984` for `9ce4d66` was in progress at the time of this handoff update (VPK build step). Its result and native-map artifacts must be checked on the next continuation. The workflow is configured to remove the private game input and generated VPKs; only native diagnostic artifacts are retained. No VPK was uploaded or shared.
+
+### Next concrete tasks
+1. Finish checking VitaSDK run `44908601984`; inspect its current-build reserve-callsite map and linker symbols.
+2. Map the old runtime callers `0x8155be5b` (8MiB) and `0x81577df7` (1MiB) only if a same-build map becomes available. They do not appear in the retained maps from runs `44741857552` or `44793011314`, so those maps cannot attribute the old log.
+3. Use the new `legacy_peak_used` data to decide whether the 8MiB legacy reservation is wasteful. Separately trace the 7,862,828-byte PCM allocation and the 1MiB reserve owner. Do not change audio quality, rendering, or pool sizes without ownership and lifetime evidence.
+4. Continue static ownership/lifetime analysis if no same-build device log is available; do not request routine user action.
