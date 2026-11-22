@@ -502,3 +502,66 @@ The new read-only sampler records last/peak legacy bytes, valid samples, and ove
 2. Map the old runtime callers `0x8155be5b` (8MiB) and `0x81577df7` (1MiB) only if a same-build map becomes available. They do not appear in the retained maps from runs `44741857552` or `44793011314`, so those maps cannot attribute the old log.
 3. Use the new `legacy_peak_used` data to decide whether the 8MiB legacy reservation is wasteful. Separately trace the 7,862,828-byte PCM allocation and the 1MiB reserve owner. Do not change audio quality, rendering, or pool sizes without ownership and lifetime evidence.
 4. Continue static ownership/lifetime analysis if no same-build device log is available; do not request routine user action.
+
+
+## 2026-11-22 scheduled investigation: legacy-pool lifetime and build-output safety
+
+Branch head before this handoff update: `bdd5ce912d6938903dd1fe35ecf46c49773ea46e` (`optimization/baseline-profiling` only).
+
+### Safety correction: private cloud build removed
+
+The preceding branch commit `b09eb94accef673ff91920e1263943b91152fbc2` had re-enabled `.github/workflows/cloud-vita-build.yml`. Its successful run `44963951089` downloaded the existing private `desktop-1.0.jar` and uploaded `STSVITA.vpk`, `STSVITA-slim.vpk`, `STSVITA.map`, and `build-manifest.json` to the private temporary release. This conflicted with the current instruction not to request/download proprietary game data or upload VPK/game-derived outputs. The VPK asset had one recorded download before cleanup; no conclusion is made about who downloaded it.
+
+Corrective sequence:
+- Commit `075da819c20d1721350027dd5b9c36416a183e2a` temporarily replaced the build workflow with a cleanup-only job; it did not download the JAR or build/upload anything.
+- Cleanup run `45022426240` succeeded. Job log confirms deletion of asset IDs 777281368 (`build-manifest.json`), 777281307 (`STSVITA-slim.vpk`), 777281325 (`STSVITA.map`), and 777281015 (`STSVITA.vpk`).
+- The private temporary release was re-read after cleanup; only the pre-existing `desktop-1.0.jar` remained. It was not modified by cleanup.
+- Commit `bdd5ce912d6938903dd1fe35ecf46c49773ea46e` then deleted `.github/workflows/cloud-vita-build.yml` entirely, preventing future automatic retrieval of the private JAR or publication of VPKs. Do not recreate this workflow without explicit user authorization.
+- No VPK, JAR, extracted assets, or generated game assets were added to the repository. `main` was not touched.
+
+Host validation for the resulting branch head:
+- Actions run `45022469787` succeeded on `bdd5ce9`.
+- `bash -n build.sh`, `./build.sh --help`, and `make test` all completed successfully.
+- Python suite: 56 tests passed.
+- `FramePacingStatsTest` and `FrameTraceBufferTest`: passed.
+- Native C tests for spill tracking, reserve fallback, and legacy-pool diagnostics all ran successfully under `make test`.
+- Cleanup-only workflow run `45022426240` also succeeded. No VitaSDK build was attempted in this run because the cloud build path was removed to comply with the no-proprietary-input/no-VPK-upload rule.
+
+### vitaGL reserve callsites and lifetime findings
+
+Inspected the native diagnostic artifacts from run `44963951089`: artifact `native-callsite-disassembly` (14730599494), `native-address-symbol-report` (14731455719), and `native-linker-map` (14730579518). The linked library identifies as vitaGL `0.0.0.r1488.g2bdbe89-1`.
+
+Current binary map:
+- `scene_reset`: `0x81528904`
+- `vglSetupGarbageCollector`: `0x81528f78`
+- `scene_reset` reserve instruction: `0x81528a3e`; Thumb LR/runtime caller: `0x81528a43` (function offset `0x13a`)
+- `legacy_pool_size`: `0x82238b00`
+- `legacy_pool`: `0x8223ff28`
+- `legacy_pool_ptr`: `0x8223ff2c`
+
+Pinned upstream source inspected at vitaGL commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`:
+- `source/gxm.c:577-597`: `scene_reset()` reserves `legacy_pool_size` via `gpu_alloc_mapped_temp()` only when `needs_end_scene == GL_FALSE`; it then sets `needs_end_scene = GL_TRUE`. Later scene resets in the same frame end/restart the GXM scene but do not reserve another legacy pool.
+- `source/gxm.c:786-811`: `vglSwapBuffers()` increments the frame number, records the old circular-pool peak, rotates `vgl_circular_idx`, resets that buffer's cursor, then sets `needs_end_scene = GL_FALSE`.
+- Repository `native/src/glue/gl_glue.c:stsv_swap_buffers()` calls `stsv_legacy_pool_sample_frame()` immediately before `vglSwapBuffers()`. Thus the existing legacy-pool sampler observes the completed frame before the circular pool rotates.
+- Therefore the 8 MiB `scene_reset` reserve is a per-frame scratch reservation, not a persistent allocation/leak by itself. The sampler's `legacy_peak_used` and `legacy_overrun_frames` are the right evidence before considering a smaller configured legacy pool.
+
+Prior Library log `stsvita(1).log` (uploaded 2026-11-19) contains 55,516 occurrences of the old caller `0x81597e5b` requesting 8,388,608 bytes. Its result cycles among three circular-pool bases; the observed per-buffer span is 10.6667 MiB, leaving about 2.6667 MiB after the 8 MiB reserve. Most sampled requests are in-pool; some show `overflow=1` but still return a valid fallback pointer. This repeated pattern is consistent with the per-frame legacy-pool reservation. The old caller address is from a different linked binary and must not be directly equated with the current `0x81528a43` callsite without a same-build log.
+
+The same old log has 24 occurrences of `caller=0x815b3df7` requesting 1/2/4 MiB around texture preload and `[DIAG subtex] MARK` entries. It is likely a compressed-texture staging path, but the old address is not mapped to the current binary. Current pinned VitaGL source has several such temporary staging paths:
+- `source/utils/gpu_utils.c`, `gpu_alloc_cube_texture`: `gpu_alloc_mapped_temp(tex_size)` followed by memcpy/transfer.
+- `gpu_alloc_compressed_cube_texture` and `gpu_alloc_compressed_texture`: UBC/PVRTII staging calls use `gpu_alloc_mapped_temp(image_size)` followed immediately by memcpy and `sceGxmTransferCopy`, without a NULL check at those callsites.
+- Compressed mip-chain growth also has a source-level unchecked fallback if both realloc and mapped allocation fail.
+These are credible allocation-failure crash hazards, not proof that the 2026-11-19 caller `0x815b3df7` maps to a specific one. No upstream VitaGL source patch or rendering change was made.
+
+### Allocation interpretation
+
+In the pinned source, `vglForceAlloc()` delegates to `gpu_alloc_mapped_for_cpu()`. Its inner allocator tries RAM, PHYCONT, budget memory, VRAM, then external memory when enabled. A single 8 MiB request can fail even when the sum of free bytes across pools exceeds 8 MiB, because no individual pool has a sufficiently large contiguous block. The earlier log's per-pool free values (roughly 6.6 MiB RAM, 6.4 MiB PHYCONT, and 49 KiB VRAM at the relevant point) are consistent with contiguous-capacity/fragmentation pressure; they do not establish a leak. Successful overflow allocations are passed to `vglLazyFree()` for deferred reclamation. The wrapper also avoids enqueuing NULL sentinels and saturates the circular cursor at the limit.
+
+### Next concrete task
+
+Do not change pool sizes, texture upload behavior, allocators, or audio. The next decision depends on a Vita run with the diagnostic source already present:
+1. At `[act2-diag] mem` events, capture `legacy_peak_used`, `legacy_last_used`, `legacy_overrun_frames`, `legacy_valid`, and the current pool/newlib free fields.
+2. Correlate any `[act2-diag] draw-reserve` failures by `caller`, `size`, `overflow`, `invalid`, `idx`, and circular `ptr/limit`.
+3. If the 8 MiB legacy pool high-water is consistently far below 8 MiB, consider a small reduction with an explicit safety margin and regression/compile validation. If it approaches the limit, do not reduce it; investigate the exact texture-staging caller and GC pressure instead.
+
+The diagnostic VPK produced by run `44963951089` was deleted from the private release as part of the safety cleanup. No new VPK is available. If that exact diagnostic build is already installed on the Vita, no reinstall is needed for the next log capture. Otherwise a local build requires the user's own legal game installation/JAR and VitaSDK; do not upload either input or any generated VPK.
