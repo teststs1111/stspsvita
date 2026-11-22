@@ -565,3 +565,21 @@ Do not change pool sizes, texture upload behavior, allocators, or audio. The nex
 3. If the 8 MiB legacy pool high-water is consistently far below 8 MiB, consider a small reduction with an explicit safety margin and regression/compile validation. If it approaches the limit, do not reduce it; investigate the exact texture-staging caller and GC pressure instead.
 
 The diagnostic VPK produced by run `44963951089` was deleted from the private release as part of the safety cleanup. No new VPK is available. If that exact diagnostic build is already installed on the Vita, no reinstall is needed for the next log capture. Otherwise a local build requires the user's own legal game installation/JAR and VitaSDK; do not upload either input or any generated VPK.
+
+
+### Follow-up evidence from existing Vita logs and audio ownership
+
+The two Library logs were re-queried by exact patterns rather than relying only on prior summaries:
+
+- `stsvita.log` contains 34 `invalid=1` matches for the 8,388,608-byte reserve at old caller `0x8155be5b`. A representative event is immediately followed by `[act2-diag] mem event=draw-reserve-INVALID`: `pool_free=49/6615/6412KB`, `newlib_free=2974KB`, `used=241785KB`, `arena=244760KB`. The failed fallback therefore occurred with no individual RAM/PHYCONT/VRAM pool having an 8 MiB contiguous free block. The old wrapper's post-failure cursor wrapped to a low address (`post_ptr=0x491ad0)); current source has the saturating-cursor fix, so that old corruption mechanism is no longer present in the current source. The allocation can still fail.
+- The old caller `0x8155be5b` is not mapped by the current binary's linker map. The earlier artifact ID 14478524832 is no longer retrievable (GitHub API 404); the newer artifact 14730599494 maps only the newer binary. Do not infer that the old caller is `scene_reset` merely because the request size is 8 MiB.
+- `stsvita(1).log` contains `[audio] sound pcm malloc FAILED (1416960 bytes)`. This is a large contiguous SFX decode allocation failure, not evidence of a retained PCM buffer.
+
+Current audio ownership inspected in `native/src/glue/audio_glue.c`:
+- `stsv_sound_load()` (lines 137-198) obtains the exact decoded PCM size from `ov_pcm_total()`, allocates one buffer, decodes into it, passes it to `alBufferData()`, then immediately `free()`s the PCM. If the initial allocation fails, it logs and returns 0 after `ov_clear()`. `stsv_sound_free()` (201 onward) stops any source bound to the AL buffer and deletes the AL buffer.
+- `stsv_music_open()` / `stsv_music_open_path()` retain an encoded OGG copy in `stsv_music.ogg` for the stream lifetime. `stsv_music_update()` decodes into a fixed stack chunk and recycles four AL buffers; it does not allocate a growing PCM heap buffer per update. `stsv_music_free()` stops/deletes the source, deletes all four AL buffers, clears the Vorbis decoder, and frees the encoded copy and stream object (429-439). Java `Music.dispose()` calls native free and removes the object from the active set; `Sound.dispose()` calls native sound free.
+- No missing PCM free or obvious music-handle leak was found in these paths. The 1,416,960-byte failure is consistent with heap fragmentation/capacity pressure at the point of a large SFX decode, but its precise trigger and the lifetime of all game-owned Sound objects still need runtime correlation.
+
+The old `stsvita(1).log` shows the 8 MiB caller `0x81597e5b` cycling through three circular-pool bases for 55,516 requests, with `overflow=0` in the sampled repeated draws and occasional successful overflow fallback. Combined with the pinned `scene_reset()` / `vglSwapBuffers()` source semantics, this supports a per-frame legacy scratch reservation in that older build, not a cumulative 8 MiB leak. It does not resolve the separate old caller `0x8155be5b` that failed in `stsvita.log`.
+
+No allocator, texture, audio, or rendering code was changed. The next required measurement remains a log from the diagnostic build containing `legacy_peak_used` / `legacy_overrun_frames` and same-build caller addresses. Until that data exists, do not reduce the 8 MiB legacy pool or change audio/texture quality.
