@@ -1,333 +1,55 @@
-name: Private cloud Vita build
+name: Remove temporary game-derived release outputs
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - optimization/baseline-profiling
-    paths:
-      - ".github/workflows/cloud-vita-build.yml"
-      - "native/**"
-      - "backend/**"
-      - "transpiler/**"
-      - "Makefile"
-      - "build.sh"
-      - "pipeline/**"
 
 permissions:
   contents: read
-  actions: write
-
-concurrency:
-  group: temporary-vita-build
-  cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
+  cleanup:
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out optimization branch
-        uses: actions/checkout@v4
-        with:
-          ref: optimization/baseline-profiling
-
-      - name: Remove previously exposed public VPK artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
-          artifacts_json="$(curl --fail --silent --show-error \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$api/actions/artifacts?name=STSVITA-temporary-build&per_page=100")"
-          while IFS= read -r artifact_id; do
-            [ -n "$artifact_id" ] || continue
-            curl --fail --silent --show-error -X DELETE \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "$api/actions/artifacts/$artifact_id"
-            echo "Deleted public VPK artifact $artifact_id"
-          done < <(jq -r '.artifacts[]?.id' <<< "$artifacts_json")
-
-      - name: Remove private VPK and manifest outputs
+      - name: Delete private VPK and generated build outputs
         env:
           STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
         run: |
           set -euo pipefail
           test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
           api="https://api.github.com/repos/teststs1111/stspsvita-build-private"
-          release_json="$RUNNER_TEMP/private-release-cleanup.json"
+          release_json="$RUNNER_TEMP/private-release.json"
           status="$(curl --silent --show-error -o "$release_json" -w '%{http_code}' \
             -H "Authorization: Bearer $STS_BUILD_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "$api/releases/tags/temp-build-1")"
           if [ "$status" = "404" ]; then
-            echo "Temporary private release not found; nothing to clean"
+            echo "Temporary private release does not exist; nothing to remove."
             exit 0
           fi
-          if [ "$status" != "200" ]; then
-            echo "Private release cleanup lookup failed with HTTP $status"
-            jq -r '.message // "No API error message returned"' "$release_json"
-            exit 1
-          fi
-          while IFS= read -r asset_id; do
-            [ -n "$asset_id" ] || continue
-            delete_status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' -X DELETE \
-              -H "Authorization: Bearer $STS_BUILD_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "$api/releases/assets/$asset_id")"
-            if [ "$delete_status" != "204" ] && [ "$delete_status" != "404" ]; then
-              echo "Private release asset $asset_id deletion failed with HTTP $delete_status"
-              exit 1
-            fi
-            echo "Removed private game-derived output asset $asset_id"
-          done < <(jq -r '.assets[]? | select(.name == "STSVITA.vpk" or .name == "STSVITA-slim.vpk" or .name == "build-manifest.json" or .name == "STSVITA.map") | .id' "$release_json")
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Install host dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git make cmake python3 python3-pip imagemagick ffmpeg unzip zip wget ca-certificates curl jq pkg-config libjpeg-dev libpng-dev libtiff-dev libwebp-dev libfreetype6-dev
-          if ! command -v magick >/dev/null 2>&1; then
-            printf '#!/bin/sh\nexec /usr/bin/convert "$@"\n' | sudo tee /usr/local/bin/magick >/dev/null
-            sudo chmod +x /usr/local/bin/magick
-          fi
-          python3 --version
-          java -version
-          gradle --version
-          magick -version
-          ffmpeg -version
-
-      - name: Install VitaSDK
-        run: |
-          set -euo pipefail
-          git clone --depth 1 https://github.com/vitasdk/vdpm.git "$RUNNER_TEMP/vdpm"
-          cd "$RUNNER_TEMP/vdpm"
-          export VITASDK="$RUNNER_TEMP/vitasdk"
-          export PATH="$VITASDK/bin:$PATH"
-          ./bootstrap-vitasdk.sh
-          if [ ! -x "$VITASDK/bin/pacman" ] && [ -x "$VITASDK/libexec/vdpm/pacman" ]; then
-            ln -s "$VITASDK/libexec/vdpm/pacman" "$VITASDK/bin/pacman"
-          fi
-          test -x "$VITASDK/bin/pacman"
-          export VDPM_NONINTERACTIVE=1
-          # The current channel manifest points at an incomplete package snapshot.
-          # Pin the last published complete 2026.08 snapshot (139 release assets).
-          stable_snapshot="packages-2026.08-snapshot-20261024.61.1"
-          current_server="$(grep -E '^Server = https://github.com/vitasdk/vitasdk-autobuild/releases/download/' "$VITASDK/etc/pacman.conf" | tail -n1)"
-          test -n "$current_server" || { echo "Vita package repository URL was not found"; exit 1; }
-          sed -i "s#https://github.com/vitasdk/vitasdk-autobuild/releases/download/[^[:space:]]*#https://github.com/vitasdk/vitasdk-autobuild/releases/download/$stable_snapshot#" "$VITASDK/etc/pacman.conf"
-          echo "Pinned Vita package repository:"
-          grep -A1 '^\[vita\]' "$VITASDK/etc/pacman.conf"
-          export VDPM_NONINTERACTIVE=1
-          "$VITASDK/bin/pacman" --config "$VITASDK/etc/pacman.conf" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --refresh --noconfirm
-          # GitHub's package DB asset is 18,185 bytes with this published SHA-256.
-          # Pacman's CDN download above returned a different 6,964-byte DB; fetch the
-          # exact immutable asset directly and verify it before using it.
-          stable_repo="https://github.com/vitasdk/vitasdk-autobuild/releases/download/$stable_snapshot"
-          direct_db="$RUNNER_TEMP/vita.db"
-          curl --fail --location --retry 3 --silent --show-error "$stable_repo/vita.db" --output "$direct_db"
-          actual_db_size="$(stat -c%s "$direct_db")"
-          actual_db_sha="$(sha256sum "$direct_db" | awk '{print $1}')"
-          echo "Direct Vita DB size=$actual_db_size sha256=$actual_db_sha"
-          test "$actual_db_size" = "18185"
-          test "$actual_db_sha" = "fdc3383892de595ccc2ca55bf93ce54df84af1fa8f3f25c12595ad11d65c0202"
-          install -m 0644 "$direct_db" "$VITASDK/var/lib/pacman/sync/vita.db"
-          # Make vdpm use the exact same config and database paths as the explicit pacman refresh.
-          export VDPM_PACMAN_CONF="$VITASDK/etc/pacman.conf"
-          echo "===== pacman configuration ====="
-          cat "$VDPM_PACMAN_CONF"
-          echo "===== downloaded repository databases ====="
-          find "$VITASDK/var/lib/pacman/sync" -maxdepth 1 -type f -printf '%f %s bytes\\n' 2>/dev/null || true
-          for db in "$VITASDK"/var/lib/pacman/sync/*.db; do
-            [ -f "$db" ] || continue
-            echo "===== database file: $db ====="
-            file "$db"
-            tar -tf "$db" 2>&1 | head -n 35 || true
-          done
-          echo "===== repository package inventory (required names) ====="
-          "$VITASDK/bin/pacman" --config "$VDPM_PACMAN_CONF" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --list || true
-          echo "===== targeted package metadata ====="
-          "$VITASDK/bin/pacman" --config "$VDPM_PACMAN_CONF" --root "$VITASDK" --dbpath "$VITASDK/var/lib/pacman" --cachedir "$VITASDK/var/cache/pacman/pkg" --logfile "$VITASDK/var/log/pacman.log" --sync --info vitaGL || true
-          echo "===== verify required packages ====="
-          for package in vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen; do
-            ./vdpm info "$package"
-          done
-          echo "===== install native build dependencies ====="
-          ./vdpm install vitaGL vitaShaRK SceShaccCgExt libmathneon freetype libpng openal-soft libvorbis taihen bzip2
-          echo "===== installed package verification ====="
-          ./vdpm list
-          # Export the SDK location and compiler tools to subsequent workflow steps.
-          echo "VITASDK=$VITASDK" >> "$GITHUB_ENV"
-          echo "$VITASDK/bin" >> "$GITHUB_PATH"
-
-      - name: Download private game input from temporary Release
-        env:
-          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
-          mkdir -p "$RUNNER_TEMP/sts-input"
-          release_status="$(curl --silent --show-error -o "$RUNNER_TEMP/sts-input/release.json" -w '%{http_code}' -H "Authorization: Bearer $STS_BUILD_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/tags/temp-build-1)"
-          if [ "$release_status" != "200" ]; then
-            echo "Private Release API returned HTTP $release_status"
-            jq -r '.message // "No API error message returned"' "$RUNNER_TEMP/sts-input/release.json"
-            exit 1
-          fi
-          asset_id="$(jq -r '.assets[] | select(.name=="desktop-1.0.jar") | .id' "$RUNNER_TEMP/sts-input/release.json" | head -n1)"
-          test -n "$asset_id" && test "$asset_id" != "null" || { echo "desktop-1.0.jar was not found in temp-build-1"; jq -r '.assets[]?.name' "$RUNNER_TEMP/sts-input/release.json"; exit 1; }
-          asset_status="$(curl --location --silent --show-error -o "$RUNNER_TEMP/sts-input/desktop-1.0.jar" -w '%{http_code}' -H "Authorization: Bearer $STS_BUILD_TOKEN" -H "Accept: application/octet-stream" "https://api.github.com/repos/teststs1111/stspsvita-build-private/releases/assets/$asset_id")"
-          if [ "$asset_status" != "200" ]; then
-            echo "Private Release asset API returned HTTP $asset_status"
-            jq -r '.message // "No API error message returned"' "$RUNNER_TEMP/sts-input/desktop-1.0.jar" 2>/dev/null || true
-            exit 1
-          fi
-          test -s "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
-          sha256sum "$RUNNER_TEMP/sts-input/desktop-1.0.jar"
-          jar tf "$RUNNER_TEMP/sts-input/desktop-1.0.jar" > "$RUNNER_TEMP/sts-input/jar-entries.txt"
-          test -s "$RUNNER_TEMP/sts-input/jar-entries.txt"
-          echo "JAR archive listing (first 20 entries):"
-          sed -n '1,20p' "$RUNNER_TEMP/sts-input/jar-entries.txt"
-
-      - name: Build VPK packages
-        run: |
-          set -euo pipefail
-          ./build.sh --sts-jar "$RUNNER_TEMP/sts-input/desktop-1.0.jar" --langs eng,jpn --audio-kbps 0
-          test -s build/STSVITA.vpk
-          test -s build/STSVITA-slim.vpk
-          test -s build/native/STSVITA.map
-          cp build/native/STSVITA.map build/STSVITA.map
-          ls -lh build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map
-
-      - name: Disassemble and map vitaGL reserve callsites (Thumb LR)
-        run: |
-          set -euo pipefail
-          # Thumb BL sets LR to (call + 4) | 1; report caller= to match the wrapper's saved LR.
-          vdpm info vitaGL | awk '/^[[:space:]]*(Name|Version)[[:space:]]*:/ { print }' > build/native/STSVITA.vitagl-version.txt
-          grep -qi '^Version[[:space:]]*:' build/native/STSVITA.vitagl-version.txt
-          arm-vita-eabi-objdump -d -C --line-numbers build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<__wrap_vgl_reserve_data_pool>' > build/native/STSVITA.reserve-callers.txt || true
-          arm-vita-eabi-objdump -d -C --disassemble=__wrap_vgl_reserve_data_pool build/native/STSVITA > build/native/STSVITA.reserve-wrapper.txt
-          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 'blx?[[:space:]].*<vgl_reserve_data_pool>' > build/native/STSVITA.direct-reserve-calls.txt || true
-          arm-vita-eabi-objdump -d -C build/native/STSVITA | grep -E -B 6 -A 6 '(^|[[:space:]])(malloc|calloc|realloc|FT_Memory_Alloc|ft_mem_alloc|ft_mem_qalloc|ft_mem_realloc)' > build/native/STSVITA.alloc-callers.txt || true
-          python3 tools/vitagl_reserve_map.py \
-            --binary build/native/STSVITA \
-            --version-file build/native/STSVITA.vitagl-version.txt \
-            --output build/native/STSVITA.reserve-caller-symbols.txt
-          cat build/native/STSVITA.reserve-wrapper.txt
-
-      - name: Upload native callsite disassembly
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-callsite-disassembly
-          path: |
-            build/native/STSVITA.reserve-callers.txt
-            build/native/STSVITA.reserve-wrapper.txt
-            build/native/STSVITA.direct-reserve-calls.txt
-            build/native/STSVITA.alloc-callers.txt
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload native address symbol report
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-address-symbol-report
-          path: |
-            build/native/STSVITA.reserve-caller-symbols.txt
-            build/native/STSVITA.vitagl-version.txt
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload native linker map for diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-linker-map
-          path: build/STSVITA.map
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Verify Japanese font payload and build manifest
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import zipfile
-          from pathlib import Path
-
-          manifest = json.loads(Path("build/build-manifest.json").read_text())
-          languages = manifest["options"]["languages"]
-          assert languages == ["eng", "jpn"], f"unexpected languages: {languages}"
-          fonts = manifest["assets"]["requested_cjk_fonts"]["jpn"]
-          assert fonts["files"] > 0 and fonts["bytes"] > 0, fonts
-          with zipfile.ZipFile("build/STSVITA.vpk") as vpk:
-              entries = [
-                  info for info in vpk.infolist()
-                  if info.filename.startswith("assets/font/jpn/") and not info.is_dir()
-              ]
-              assert len(entries) == fonts["files"], (len(entries), fonts)
-              assert sum(info.file_size for info in entries) == fonts["bytes"], fonts
-          print(
-              f"manifest languages={languages}; "
-              f"font/jpn packaged={len(entries)} files/{fonts['bytes']} bytes; "
-              f"full_assets_match_staging={manifest['validation']['full_assets_match_staging']}"
-          )
-          PY
-
-      - name: Publish VPKs and matching diagnostics to private Release
-        env:
-          STS_BUILD_TOKEN: ${{ secrets.STS_BUILD_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$STS_BUILD_TOKEN" || { echo "STS_BUILD_TOKEN secret is missing"; exit 1; }
-          api="https://api.github.com/repos/teststs1111/stspsvita-build-private"
-          release_json="$RUNNER_TEMP/private-release-upload.json"
-          status="$(curl --silent --show-error -o "$release_json" -w '%{http_code}' \
-            -H "Authorization: Bearer $STS_BUILD_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$api/releases/tags/temp-build-1")"
           if [ "$status" != "200" ]; then
             echo "Private Release lookup failed with HTTP $status"
             jq -r '.message // "No API error message returned"' "$release_json"
             exit 1
           fi
-          upload_url="$(jq -r '.upload_url' "$release_json" | sed 's/{?name,label}$//')"
-          test -n "$upload_url" && test "$upload_url" != "null"
-          for asset in build/STSVITA.vpk build/STSVITA-slim.vpk build/STSVITA.map build/build-manifest.json; do
-            test -s "$asset"
-            name="$(basename "$asset")"
-            echo "Uploading private asset: $name ($(stat -c%s "$asset") bytes)"
-            curl --fail --location --silent --show-error \
-              -X POST \
+          jq -r '.assets[]
+            | select(.name == "STSVITA.vpk"
+                  or .name == "STSVITA-slim.vpk"
+                  or .name == "STSVITA.map"
+                  or .name == "build-manifest.json")
+            | [.id, .name] | @tsv' "$release_json" |
+          while IFS="$(printf '\t')" read -r asset_id asset_name; do
+            test -n "$asset_id"
+            echo "Deleting private generated output: $asset_name (asset $asset_id)"
+            delete_status="$(curl --silent --show-error -o /dev/null -w '%{http_code}' \
+              -X DELETE \
               -H "Authorization: Bearer $STS_BUILD_TOKEN" \
               -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary "@$asset" \
-              "$upload_url?name=$name"
-            sha256sum "$asset"
+              "$api/releases/assets/$asset_id")"
+            if [ "$delete_status" != "204" ]; then
+              echo "Delete failed for $asset_name with HTTP $delete_status"
+              exit 1
+            fi
           done
-
-      - name: Remove game input and generated game-derived files
-        if: always()
-        run: |
-          rm -rf "$RUNNER_TEMP/sts-input"
-          rm -rf work/assets_raw work/assets_vita work/gen work/generated_c work/jar_path.txt
-          rm -rf work/assets-vita-metadata.json work/sce_sys build transpiler/build transpiler/.gradle
-# trigger build again after successful VPK generation; retrieve fresh 1-day artifact
-# Rebuild after backend VSync-off enforcement and Japanese font validation.
-
-# Rebuild with Act-2 GL buffer attribution diagnostics.
-
-# Rebuild after private build token permission and Actions secret refresh (2026-11-17).
-
-# VitaSDK 2026.08 bundles zlib in vitasdk-core; vdpm no longer has a standalone zlib target.
-# Install only direct native link dependencies instead of obsolete full vdpm package list.
-# Rebuild after fixing duplicate VitaGL reserve wrapper; verify VSync linkage and Japanese font payload (2026-11-17).
+          echo "Private VPK, map, and manifest cleanup complete."
