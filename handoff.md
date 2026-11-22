@@ -583,3 +583,42 @@ Current audio ownership inspected in `native/src/glue/audio_glue.c`:
 The old `stsvita(1).log` shows the 8 MiB caller `0x81597e5b` cycling through three circular-pool bases for 55,516 requests, with `overflow=0` in the sampled repeated draws and occasional successful overflow fallback. Combined with the pinned `scene_reset()` / `vglSwapBuffers()` source semantics, this supports a per-frame legacy scratch reservation in that older build, not a cumulative 8 MiB leak. It does not resolve the separate old caller `0x8155be5b` that failed in `stsvita.log`.
 
 No allocator, texture, audio, or rendering code was changed. The next required measurement remains a log from the diagnostic build containing `legacy_peak_used` / `legacy_overrun_frames` and same-build caller addresses. Until that data exists, do not reduce the 8 MiB legacy pool or change audio/texture quality.
+
+
+
+## 2026-11-22 — compressed mip-chain allocation preflight gap
+
+Branch head before this handoff update: `da9a88f109aa478180eb70b3edaf908d2cae0e66` (`optimization/baseline-profiling` only).
+
+### New pinned-source finding
+
+Rechecked the exact VitaGL source used by the linked build: `Rinnegatamante/vitaGL` commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8` (the linked package was previously identified as `0.0.0.r1488.g2bdbe89-1`).
+
+The repository's compressed-texture admission guard and VitaGL's actual mip-chain allocation use different sizes:
+
+- `native/src/glue/gl_common_glue.c:770-799` infers the actual upload dimensions from `image_size`, then calls `stsv_tex_can_alloc((size_t) image_size, up_w, up_h, "-compressed")` before `glCompressedTexImage2D`.
+- In pinned VitaGL `source/utils/gpu_utils.c:663-718`, `gpu_alloc_compressed_texture()` computes `tex_size` with `gpu_get_compressed_mipchain_size(mip_level, aligned_max_width, aligned_max_height, format)`. For mip levels above zero, that is the cumulative storage for levels 0 through the requested level, not just the current `image_size`.
+- If `vgl_realloc(tex->data, tex_size)` fails, VitaGL allocates a new full `tex_size` while the old texture data is still live, copies the old mip chain, and then frees the old storage. The fallback does not check `texture_data` before `vgl_memcpy(texture_data, ...)` at lines 701-707.
+- Therefore the current guard can admit a mip-level upload based on only the current level's compressed bytes even though VitaGL may need a contiguous allocation for the entire mip chain. This is a credible false-admission / OOM-crash path when the realloc cannot grow in place; it is not proof that this path caused the reported Act-transition crash.
+
+The same pinned function has a second unchecked temporary-allocation path:
+- `source/utils/gpu_utils.c:740-779` allocates `gpu_alloc_mapped_temp(image_size)` for UBC/PVRTII staging and immediately copies into it without a NULL check.
+- Pinned `source/utils/gpu_utils.h` defines `gpu_alloc_mapped_temp()` as `vgl_reserve_data_pool(size)` when the circular pool is enabled. The repository's existing `__wrap_vgl_reserve_data_pool` therefore observes these staging requests too; a same-build caller map can distinguish them from `scene_reset`'s legacy-pool reserve.
+- The existing texture preflight's `stsv_pool_maxfree()` is a coarse free-byte snapshot (maximum across VRAM/RAM/PHYCONT), not a reservation of the exact contiguous block or the full mip-chain allocation. The spill probe checks newlib headroom, but does not by itself prove that a mapped GPU allocation of the later full-chain size will succeed.
+
+### Accounting implication
+
+`stsv_spill_tracker` is keyed by texture ID and `stsv_spill_tracker_admit()` replaces the entry's byte count on each admission. Since the current call passes the per-level `image_size`, the tracked spill amount for a mipmapped texture can represent only the most recently admitted mip level rather than the cumulative backing allocation. The tracker may therefore understate the size of a mipmapped texture. Whether that affects an actual allocation depends on the format, mip upload sequence, whether `vgl_realloc` grows in place, and which memory pool owns the backing storage.
+
+### Why no code change was made
+
+A safe correction needs the base-level dimensions, VitaGL format mapping, mip count, and reallocation lifetime for the exact affected texture. A conservative full-chain admission check could reject valid in-place reallocations and blank textures earlier; changing the spill budget accounting without modeling the old+new peak could also permit a failed reallocation. No visual-quality or allocator behavior change is justified without a same-build runtime trace.
+
+### Next concrete task
+
+1. When a log from the current diagnostic binary is available, correlate each failing `draw-reserve` `caller/size` with the pinned linker map. A caller in the UBC/PVRTII branches around VitaGL `gpu_utils.c:744-779` identifies a temporary staging request; the `scene_reset` callsite remains separately recognizable.
+2. If the caller is a compressed staging path, inspect adjacent `[DIAG dxt]` / `[DIAG subtex]` records and add only the missing texture ID, mip level, base dimensions, and upload size to the existing log if needed.
+3. For a mip-growth failure, record the base texture dimensions, format, `mip_level`, per-level `image_size`, computed cumulative `tex_size`, current spill-tracker entry, and whether the same-mspace realloc succeeded. Only then decide whether to add a conservative admission check or a VitaGL source patch.
+4. Do not change the 8 MiB legacy pool, spill budget, texture quality, audio, or allocator behavior based on this source-only hypothesis.
+
+No C/Java/runtime source or tests were changed in this run. No proprietary game input was retrieved, no VPK/game-derived output was built or uploaded, and no Vita hardware success is claimed. The last confirmed host CI remains run `45022469787` on the immediately preceding source state; this handoff-only update does not alter the tested code.
