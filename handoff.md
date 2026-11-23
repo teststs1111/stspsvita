@@ -622,3 +622,46 @@ A safe correction needs the base-level dimensions, VitaGL format mapping, mip co
 4. Do not change the 8 MiB legacy pool, spill budget, texture quality, audio, or allocator behavior based on this source-only hypothesis.
 
 No C/Java/runtime source or tests were changed in this run. No proprietary game input was retrieved, no VPK/game-derived output was built or uploaded, and no Vita hardware success is claimed. The last confirmed host CI remains run `45022469787` on the immediately preceding source state; this handoff-only update does not alter the tested code.
+
+
+
+## 2026-11-23 — compressed mip-chain allocation and spill-accounting follow-up
+
+Source branch head before this handoff update: `7ace99f9bc6d2e1e2b3634a0a68ba76012e9f30e` (`optimization/baseline-profiling`). No source-code commits appeared after the 2026-11-22 analysis; this run continued from that exact head.
+
+### Exact pinned VitaGL allocation semantics
+
+Inspected the pinned VitaGL source directly at `Rinnegatamante/vitaGL` commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8` (the linked build package previously identified as `0.0.0.r1488.g2bdbe89-1`):
+
+- `source/utils/gpu_utils.c:~507-535`: `gpu_get_compressed_mip_size()` calculates block storage per level. UBC1/ETC1/UBC4 use `ceil(width/4) * ceil(height/4) * 8`; UBC2/UBC3/UBC5 use the same block count times 16.
+- Immediately after it, `gpu_get_compressed_mipchain_size()` sums levels 0 through the requested mip level, halving each dimension down to 1. The dimensions passed to it are the base texture dimensions rounded with `nearest_po2()`.
+- `source/utils/gpu_utils.c:663-718`, `gpu_alloc_compressed_texture()`: for a mip-level upload it obtains the existing base dimensions with `vglGetTexSizes(&tex->gxm_tex)`, computes the cumulative `tex_size`, and attempts `vgl_realloc(tex->data, tex_size)` when the existing mip chain is too short.
+- If that realloc fails, VitaGL requests a new full-chain allocation with `gpu_alloc_mapped_for_gpu(tex_size)` while the old `tex->data` is still live, computes the old chain size, copies the old bytes, and then frees the old texture storage. The fallback does not test the new pointer before `vgl_memcpy`; a NULL allocation can therefore become a data-abort path.
+- `source/utils/mem_utils.c`, `vgl_realloc()`: an external/newlib pointer is sent to real `realloc`; an internal pool pointer uses that pool's mspace realloc (or the custom heap when enabled). A failed growth can therefore trigger the old-plus-new transient peak described above. This is a lifetime/peak-capacity issue, not evidence of a persistent leak.
+- `source/utils/gpu_utils.c`, `gpu_alloc_mapped_aligned_for_gpu_inner()`: fallback allocation tries VRAM, RAM, PHYCONT, budget memory, then external memory. A single cumulative mip-chain allocation must fit one allocator path; aggregate free bytes across pools are not a guarantee.
+
+### Current repository guard/accounting mismatch
+
+- `native/src/glue/gl_common_glue.c:~416-444`, `stsv_tex_can_alloc()`, is currently called from `stsv_tex_image_compressed()` with the current level's `image_size`, not VitaGL's cumulative `tex_size`. Its pool test is `maxfree > need + 1 MiB`; it is a preflight heuristic, not a reservation.
+- `native/src/glue/gl_common_glue.c:~748-802`: level-0 compressed redefinition refunds an old spill entry; higher mip levels intentionally do not refund it. However, when a higher mip level goes through the spill path, `stsv_spill_tracker_admit()` replaces the entry's prior byte count with the current level's `image_size`. If the base level was admitted to a pool, the pool branch returns without adding any spill charge even though VitaGL may later fall back to external memory for the full chain.
+- `native/src/glue/stsv_spill_tracker.h:~25-48` implements replacement accounting. `native/tests/spill_tracker_test.c:~6-19` explicitly tests replacement semantics for re-upload. That behavior is appropriate for a level-0 redefinition but does not model mip-chain extension.
+- This establishes a source-level under-accounting/false-admission possibility for mipmapped compressed textures. It does **not** establish that the affected Act-transition assets actually issue mip levels above zero, nor that this path caused the reported crash. Do not change the budget or texture admission behavior yet.
+
+### Runtime evidence gap confirmed
+
+The retained Library `stsvita.log` has only 10 `[DIAG dxt]` records, all boot-critical spill decisions. The current `[DIAG dxt]` lines contain dimensions, byte need, spill total, and path, but not GL texture id, mip level, internal format, base dimensions, or per-texture tracked bytes. The `[DIAG subtex] MARK` lines have texture id/path but are emitted after uploads and do not identify the compressed mip level. Thus the retained logs cannot confirm whether Act 2 has level>0 compressed uploads or whether their tracker charge is being replaced.
+
+### Why no runtime code was changed
+
+A full-chain preflight could reject a texture whose existing allocation can grow in place, causing a blank/reduced mip texture and a visual regression. Conversely, changing replacement accounting to cumulative without knowing whether VitaGL reallocates in place or moves the texture could overcharge the 6 MiB spill budget and reject valid content. The pinned VitaGL fallback also needs a NULL check, but the project links the prebuilt VitaSDK library; patching that internal path safely would require a separately reviewed VitaGL source/build strategy. No safe behavior change is justified from source alone.
+
+### Next concrete task
+
+Extend the existing bounded `[DIAG dxt]` trace only for compressed uploads with `level > 0` (and a bounded matching base-level record where needed) to capture: texture id, mip level, internal format, current level dimensions, `image_size`, base dimensions, computed cumulative mip-chain size, pool max-free, and the texture's current spill-tracker charge. Keep this read-only and bounded; do not add per-frame logging or a second diagnostics subsystem. Use the first same-build Act-transition log to decide whether a small accounting correction is warranted. Do not reduce the 8 MiB legacy pool, increase any pool, change texture/audio quality, or alter allocator behavior before that evidence exists.
+
+### Validation and safety
+
+- Confirmed current branch head before this handoff update: `7ace99f9bc6d2e1e2b3634a0a68ba76012e9f30e`.
+- Host Actions run `45022469787`: job `host-tests` completed successfully. Its steps explicitly passed build-script syntax, `./build.sh --help`, and `make test`.
+- No VitaSDK build was attempted in this run: the private cloud-build workflow was removed on 2026-11-22 to prevent proprietary JAR retrieval and VPK/game-derived output uploads. No proprietary input, extracted assets, generated assets, or VPK were accessed or created.
+- No physical Vita success is claimed. No user action is required yet; source/runtime trace work remains possible without a device.
