@@ -665,3 +665,45 @@ Extend the existing bounded `[DIAG dxt]` trace only for compressed uploads with 
 - Host Actions run `45022469787`: job `host-tests` completed successfully. Its steps explicitly passed build-script syntax, `./build.sh --help`, and `make test`.
 - No VitaSDK build was attempted in this run: the private cloud-build workflow was removed on 2026-11-22 to prevent proprietary JAR retrieval and VPK/game-derived output uploads. No proprietary input, extracted assets, generated assets, or VPK were accessed or created.
 - No physical Vita success is claimed. No user action is required yet; source/runtime trace work remains possible without a device.
+
+
+## 2026-11-24 — bounded compressed mip-chain allocation trace
+
+### Branch and commits
+
+- Work branch: `optimization/baseline-profiling` only.
+- Source/diagnostic commit: `e8b6d4a1f00ca8fff7adbb4fa4919a3eb85c7232` — `diag: trace compressed mip allocation peaks`.
+- Follow-up correctness/format cleanup: `79588c1e3a327fcc5f93a5b66175f35d032f6548` — `fix: tidy compressed mip trace metadata`.
+- Branch head after this work: `79588c1e3a327fcc5f93a5b66175f35d032f6548`.
+- No other branch or repository was changed.
+
+### What changed
+
+This extends the existing `[DIAG dxt]` path; it does not add a separate logging subsystem and does not alter texture admission, allocation, rendering, audio, or asset quality.
+
+- `native/src/glue/stsv_compressed_mip_diag.h:28`: pure, overflow-checked mirror of the pinned vitaGL mip-chain sizing rule. It rounds base dimensions with the same `nearest_po2` bit operation, then sums block storage for levels 0 through the requested level. DXT1 uses 8-byte blocks; DXT5 uses 16-byte blocks.
+- `native/src/glue/gl_common_glue.c:252`: bounded 256-entry base-level table keyed by live GL texture ID, plus a maximum of 128 emitted mip records. Base dimensions are the actual dimensions passed to vitaGL (including reduced-data DDS dimensions). Entries are cleared on level-zero redefinition and `glDeleteTextures`.
+- `native/src/glue/gl_common_glue.c:700` and `833`: both compressed upload routes (RGBA-to-DXT and precompressed DXT) snapshot pool max-free, current per-texture spill charge, and total spill use before the admission call, then emit the matching mip record for level > 0.
+- `native/src/glue/gl_common_glue.c:991`: texture deletion also clears the diagnostic base record.
+- `native/src/glue/stsv_spill_tracker.h:51`: read-only lookup for the current spill charge by texture ID.
+- `native/tests/compressed_mip_diag_test.c` and `native/tests/spill_tracker_test.c`: tests cover power-of-two rounding, cumulative DXT1/DXT5 sizes, non-power-of-two dimensions, 1x1 tail levels, invalid inputs, base-table update/clear/full behavior, and spill-charge lookup. `Makefile:126` includes the new C test in `make test`.
+
+A `[DIAG dxt] MIP` record is bounded and includes `id`, `level`, `fmt`, current level dimensions, `image_bytes`, base-known flag and base dimensions/format, format-match flag, estimated cumulative chain bytes, block size, pool max-free bytes, per-texture spill charge, total spill use, admission result, and source path. Records are limited to 128 and filtered to City Scene uploads, large level/chain sizes (at least 512 KiB), low pool max-free (below 16 MiB), or an existing spill charge/use. The base table is 256 entries (about 4 KiB of static storage); a full table reports `base_known=0` rather than evicting a possibly live texture.
+
+### Source basis
+
+Verified against pinned vitaGL commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`, `source/shared.h` (`nearest_po2`) and `source/utils/gpu_utils.c` (`gpu_get_compressed_mip_size`, `gpu_get_compressed_mipchain_size`, and `gpu_alloc_compressed_texture`). The size estimate is exact for the DXT1/UBC1 and DXT5/UBC3 formats handled by these glue paths; unsupported internal formats produce `block_bytes=0` and no chain estimate.
+
+### Validation
+
+- Host Actions run `45388734425` for source commit `e8b6d4a`: job `host-tests` succeeded; build-script syntax, build help, and host-side test steps all completed successfully.
+- Final-head Host Actions run `45388929027` for `79588c1`: job `host-tests` succeeded; steps `Check build script syntax`, `Check build help`, and `Run host-side tests` all completed successfully.
+- The final-head `make test` step includes the new compressed-mip helper C test and the spill-tracker getter test.
+- No VitaSDK build was run: the private cloud build was removed to avoid retrieving proprietary game inputs or uploading generated game outputs. No proprietary JAR/assets, generated game assets, or VPK were accessed, created, or uploaded in this run.
+- No physical Vita result is claimed.
+
+### Interpretation and next task
+
+This is measurement preparation, not a memory fix. It can now distinguish a large per-level upload from the cumulative allocation VitaGL requests when extending the mip chain, and correlate that peak with the existing spill charge and largest currently free VitaGL pool.
+
+Next, use a log from this exact diagnostic source build during the previously failing long-session/Act transition. Compare `image_bytes` with `chain_est_bytes`, check whether `base_fmt_match=1`, and correlate `id` with existing `[DIAG dxt]`, `[DIAG subtex]`, and `[act2-diag] draw-reserve` records. If the same texture's chain estimate exceeds the current spill charge or per-level admission need, that confirms an accounting mismatch for that texture but still does not by itself prove a leak. Only after same-build runtime evidence should a conservative peak/admission correction or a VitaGL NULL-fallback patch be considered. Do not enlarge pools, lower texture/audio quality, or change allocator behavior based only on this trace.
