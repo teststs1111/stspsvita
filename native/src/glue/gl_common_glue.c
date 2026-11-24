@@ -242,6 +242,7 @@ static void stsv_mip_diag_forget(int id) {
 
 static void stsv_mip_diag_record_base(int id, int width, int height,
                                       int internal_format) {
+    if (width <= 0 || height <= 0) return;
     (void) stsv_mip_diag_base_set(stsv_mip_diag_bases,
                                   STSV_MIP_DIAG_TRACK, id,
                                   (uint32_t) width, (uint32_t) height,
@@ -263,6 +264,7 @@ static void stsv_mip_diag_log_upload(int id, int level, int internal_format,
                                             &base_format);
     size_t block_bytes = internal_format == GL_COMPRESSED_RGB_S3TC_DXT1_EXT
             ? 8u : internal_format == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT ? 16u : 0u;
+    int base_format_match = base_known && base_format == internal_format;
     size_t chain_bytes = base_known && block_bytes != 0
             ? stsv_compressed_mip_chain_bytes(base_width, base_height,
                                               level, block_bytes) : 0;
@@ -277,12 +279,13 @@ static void stsv_mip_diag_log_upload(int id, int level, int internal_format,
     fprintf(stderr,
             "[DIAG dxt] MIP id=%d level=%d fmt=0x%x level_size=%dx%d "
             "image_bytes=%lu base_known=%d base=%ux%u base_fmt=0x%x "
-            "chain_est_bytes=%lu block_bytes=%lu pool_maxfree_bytes=%lu "
+            "base_fmt_match=%d chain_est_bytes=%lu block_bytes=%lu pool_maxfree_bytes=%lu "
             "spill_charge_bytes=%lu spill_used_bytes=%lu admitted=%d path=%s\n",
             id, level, (unsigned int) internal_format, width, height,
             (unsigned long) image_size, base_known,
             (unsigned int) base_width, (unsigned int) base_height,
-            (unsigned int) base_format, (unsigned long) chain_bytes,
+            (unsigned int) base_format, base_format_match,
+            (unsigned long) chain_bytes,
             (unsigned long) block_bytes, (unsigned long) pool_maxfree,
             (unsigned long) spill_charge, (unsigned long) spill_used,
             admitted, stsv_tex_path);
@@ -843,7 +846,6 @@ void stsv_tex_image_compressed(int target, int level, int internal_format,
         stsv_mip_diag_forget(bound_id);
     }
     stsv_unmark_compressed(bound_id);
-    stsv_unmark_glyph_page(bound_id);
     stsv_unmark_glyph_page(bound_id);
 #endif
     /* width/height are the LOGICAL dimensions (what the game's layout/UV math
