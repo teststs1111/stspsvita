@@ -45,6 +45,14 @@ static void test_full_table_allows_existing_id_update(void) {
     assert(entries[1].id == 2 && entries[1].bytes == 40);
 }
 
+static void test_bytes_for_id_reports_current_charge(void) {
+    stsv_spill_entry entries[2] = {{7, 40}, {9, 80}};
+    assert(stsv_spill_tracker_bytes_for_id(entries, 2, 7) == 40);
+    assert(stsv_spill_tracker_bytes_for_id(entries, 2, 9) == 80);
+    assert(stsv_spill_tracker_bytes_for_id(entries, 2, 10) == 0);
+    assert(stsv_spill_tracker_bytes_for_id(entries, 2, 0) == 0);
+}
+
 static void test_refund_frees_budget_and_slot(void) {
     stsv_spill_entry entries[1] = {{9, 80}};
     size_t used = 80;
@@ -78,6 +86,7 @@ int main(void) {
     test_zero_id_is_never_admitted();
     test_full_table_rejects_untracked_texture();
     test_full_table_allows_existing_id_update();
+    test_bytes_for_id_reports_current_charge();
     test_refund_frees_budget_and_slot();
     test_refund_unknown_id_is_noop();
     test_redefinition_to_pool_releases_previous_spill();

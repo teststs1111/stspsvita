@@ -48,6 +48,15 @@ static inline int stsv_spill_tracker_admit(stsv_spill_entry *entries,
     return 1;
 }
 
+static inline size_t stsv_spill_tracker_bytes_for_id(const stsv_spill_entry *entries,
+                                                        size_t capacity, int id) {
+    if (entries == NULL || id == 0) return 0;
+    for (size_t i = 0; i < capacity; i++) {
+        if (entries[i].id == id) return entries[i].bytes;
+    }
+    return 0;
+}
+
 static inline int stsv_spill_tracker_refund(stsv_spill_entry *entries,
                                              size_t capacity, int id,
                                              size_t *used) {

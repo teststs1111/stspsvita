@@ -1,6 +1,7 @@
 #include "stsv_gl.h"
 #include "stsvita_glue.h"
 #include "stsv_spill_tracker.h"
+#include "stsv_compressed_mip_diag.h"
 #include "stsv_reserve_fallback.h"
 #include "stsv_legacy_pool_diag.h"
 
@@ -222,6 +223,69 @@ static size_t stsv_pool_maxfree(void) {
     size_t fr = vglMemFree(VGL_MEM_RAM);  if (fr > maxfree) maxfree = fr;
     fr = vglMemFree(VGL_MEM_PHYCONT);         if (fr > maxfree) maxfree = fr;
     return maxfree;
+}
+
+/* Existing [DIAG dxt] extension: retain a bounded base-level descriptor per
+ * live texture id, then emit matching level>0 allocation facts. This is
+ * read-only; it does not reserve memory or change texture admission. */
+#define STSV_MIP_DIAG_TRACK 256
+#define STSV_MIP_DIAG_LOG_LIMIT 128u
+#define STSV_MIP_DIAG_LARGE_BYTES (512u << 10)
+#define STSV_MIP_DIAG_LOW_POOL_BYTES (16u << 20)
+static stsv_compressed_mip_base stsv_mip_diag_bases[STSV_MIP_DIAG_TRACK];
+static unsigned int stsv_mip_diag_log_count;
+
+static void stsv_mip_diag_forget(int id) {
+    (void) stsv_mip_diag_base_clear(stsv_mip_diag_bases,
+                                    STSV_MIP_DIAG_TRACK, id);
+}
+
+static void stsv_mip_diag_record_base(int id, int width, int height,
+                                      int internal_format) {
+    (void) stsv_mip_diag_base_set(stsv_mip_diag_bases,
+                                  STSV_MIP_DIAG_TRACK, id,
+                                  (uint32_t) width, (uint32_t) height,
+                                  internal_format);
+}
+
+static void stsv_mip_diag_log_upload(int id, int level, int internal_format,
+                                     int width, int height, size_t image_size,
+                                     size_t pool_maxfree, size_t spill_charge,
+                                     size_t spill_used, int admitted) {
+    if (id == 0 || level <= 0 || stsv_mip_diag_log_count >= STSV_MIP_DIAG_LOG_LIMIT) {
+        return;
+    }
+    uint32_t base_width = 0, base_height = 0;
+    int base_format = 0;
+    int base_known = stsv_mip_diag_base_get(stsv_mip_diag_bases,
+                                            STSV_MIP_DIAG_TRACK, id,
+                                            &base_width, &base_height,
+                                            &base_format);
+    size_t block_bytes = internal_format == GL_COMPRESSED_RGB_S3TC_DXT1_EXT
+            ? 8u : internal_format == GL_COMPRESSED_RGBA_S3TC_DXT5_EXT ? 16u : 0u;
+    size_t chain_bytes = base_known && block_bytes != 0
+            ? stsv_compressed_mip_chain_bytes(base_width, base_height,
+                                              level, block_bytes) : 0;
+    int city_path = strstr(stsv_tex_path, "/cityScene/") != NULL;
+    if (!city_path && image_size < STSV_MIP_DIAG_LARGE_BYTES
+            && chain_bytes < STSV_MIP_DIAG_LARGE_BYTES
+            && pool_maxfree >= STSV_MIP_DIAG_LOW_POOL_BYTES
+            && spill_charge == 0 && spill_used == 0) {
+        return;
+    }
+    stsv_mip_diag_log_count++;
+    fprintf(stderr,
+            "[DIAG dxt] MIP id=%d level=%d fmt=0x%x level_size=%dx%d "
+            "image_bytes=%lu base_known=%d base=%ux%u base_fmt=0x%x "
+            "chain_est_bytes=%lu block_bytes=%lu pool_maxfree_bytes=%lu "
+            "spill_charge_bytes=%lu spill_used_bytes=%lu admitted=%d path=%s\n",
+            id, level, (unsigned int) internal_format, width, height,
+            (unsigned long) image_size, base_known,
+            (unsigned int) base_width, (unsigned int) base_height,
+            (unsigned int) base_format, (unsigned long) chain_bytes,
+            (unsigned long) block_bytes, (unsigned long) pool_maxfree,
+            (unsigned long) spill_charge, (unsigned long) spill_used,
+            admitted, stsv_tex_path);
 }
 
 /* Narrow, removable Act-transition diagnostics. All output goes directly to
@@ -638,7 +702,10 @@ void stsv_tex_image_rgba(int target, int level, int width, int height, const voi
     /* vitaGL frees the previous base-level storage on a level-0 redefinition.
      * Release its old spill admission before testing the replacement. Higher
      * mip levels extend the existing allocation and must not refund it. */
-    if (level == 0) stsv_spill_refund(bound_id);
+    if (level == 0) {
+        stsv_spill_refund(bound_id);
+        stsv_mip_diag_forget(bound_id);
+    }
     stsv_unmark_compressed(bound_id);
     /* Known glyph pages must stay uncompressed forever, no matter how full
      * their re-upload is — see stsv_mark_glyph_page. */
@@ -723,7 +790,22 @@ void stsv_tex_image_rgba(int target, int level, int width, int height, const voi
              * has room OR the bounded newlib spill accepts it; otherwise drop
              * to a 4x4 blank so the run survives (that atlas page renders
              * empty) instead of hard-crashing. */
-            if (stsv_tex_can_alloc(outSize, width, height, "")) {
+            size_t mip_pool_maxfree = level > 0 ? stsv_pool_maxfree() : 0;
+            size_t mip_spill_charge = level > 0
+                    ? stsv_spill_tracker_bytes_for_id(stsv_spilled,
+                                                      STSV_SPILL_TRACK, bound_id) : 0;
+            size_t mip_spill_used = level > 0 ? stsv_spill_used : 0;
+            int admitted = stsv_tex_can_alloc(outSize, width, height, "");
+            if (level > 0) {
+                stsv_mip_diag_log_upload(bound_id, level, (int) fmt,
+                                         width, height, outSize,
+                                         mip_pool_maxfree, mip_spill_charge,
+                                         mip_spill_used, admitted);
+            }
+            if (admitted) {
+                if (level == 0) {
+                    stsv_mip_diag_record_base(bound_id, width, height, (int) fmt);
+                }
                 int64_t up_t0 = stsv_wall_us();
                 glCompressedTexImage2D((GLenum) target, level, fmt,
                                        width, height, 0, (GLsizei) outSize, out);
@@ -756,8 +838,12 @@ void stsv_tex_image_compressed(int target, int level, int internal_format,
     int bound_id = stsv_bound_tex();
     /* A level-0 compressed definition replaces the previous texture storage;
      * mip-level uploads extend that storage and retain its spill accounting. */
-    if (level == 0) stsv_spill_refund(bound_id);
+    if (level == 0) {
+        stsv_spill_refund(bound_id);
+        stsv_mip_diag_forget(bound_id);
+    }
     stsv_unmark_compressed(bound_id);
+    stsv_unmark_glyph_page(bound_id);
     stsv_unmark_glyph_page(bound_id);
 #endif
     /* width/height are the LOGICAL dimensions (what the game's layout/UV math
@@ -792,11 +878,27 @@ void stsv_tex_image_compressed(int target, int level, int internal_format,
      * when no allocation path can hold the texture. Pool room OR bounded
      * newlib spill; otherwise drop to a 4x4 blank so the run survives (that
      * page renders empty) instead of hard-crashing (C2-12828-1). */
-    if (!stsv_tex_can_alloc((size_t) image_size, up_w, up_h, "-compressed")) {
+    size_t mip_pool_maxfree = level > 0 ? stsv_pool_maxfree() : 0;
+    size_t mip_spill_charge = level > 0
+            ? stsv_spill_tracker_bytes_for_id(stsv_spilled,
+                                              STSV_SPILL_TRACK, bound_id) : 0;
+    size_t mip_spill_used = level > 0 ? stsv_spill_used : 0;
+    int admitted = stsv_tex_can_alloc((size_t) image_size, up_w, up_h,
+                                      "-compressed");
+    if (level > 0) {
+        stsv_mip_diag_log_upload(bound_id, level, internal_format,
+                                 up_w, up_h, (size_t) image_size,
+                                 mip_pool_maxfree, mip_spill_charge,
+                                 mip_spill_used, admitted);
+    }
+    if (!admitted) {
         unsigned char blank[64] = {0};
         glTexImage2D((GLenum) target, level, GL_RGBA, 4, 4, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, blank);
         return;
+    }
+    if (level == 0) {
+        stsv_mip_diag_record_base(bound_id, up_w, up_h, internal_format);
     }
 #endif
     int64_t up_t0 = stsv_wall_us();
@@ -888,6 +990,7 @@ void stsv_gl_delete_texture(int texture) {
     GLuint id = (GLuint) texture;
 #if defined(__vita__) || defined(VITA)
     stsv_spill_refund(texture);
+    stsv_mip_diag_forget(texture);
     stsv_unmark_compressed(texture);
     stsv_unmark_glyph_page(texture);
 #endif
