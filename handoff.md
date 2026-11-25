@@ -707,3 +707,41 @@ Verified against pinned vitaGL commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`
 This is measurement preparation, not a memory fix. It can now distinguish a large per-level upload from the cumulative allocation VitaGL requests when extending the mip chain, and correlate that peak with the existing spill charge and largest currently free VitaGL pool.
 
 Next, use a log from this exact diagnostic source build during the previously failing long-session/Act transition. Compare `image_bytes` with `chain_est_bytes`, check whether `base_fmt_match=1`, and correlate `id` with existing `[DIAG dxt]`, `[DIAG subtex]`, and `[act2-diag] draw-reserve` records. If the same texture's chain estimate exceeds the current spill charge or per-level admission need, that confirms an accounting mismatch for that texture but still does not by itself prove a leak. Only after same-build runtime evidence should a conservative peak/admission correction or a VitaGL NULL-fallback patch be considered. Do not enlarge pools, lower texture/audio quality, or change allocator behavior based only on this trace.
+
+
+## 2026-11-25 — retained-log provenance check after compressed-mip tracing
+
+### Branch and validation state
+
+- Confirmed the work branch is `optimization/baseline-profiling`; branch head before this note was `236388155ed601f8a3e8b2609d5ad0dedc534551`.
+- Latest source state is the 2026-11-24 compressed-mip diagnostic implementation (`e8b6d4a`, `79588c1`) plus the handoff-only commit `2363881`. No intervening source-code commit was present on the work branch.
+- Latest host workflow run `45389165520` on `2363881` completed successfully. The actual `host-tests` job and each relevant step succeeded: build-script syntax, build help, and host-side tests.
+- No VitaSDK/private game build was attempted. The private cloud-build workflow remains removed; no proprietary JAR, extracted/generated game assets, or VPK was accessed, created, or uploaded.
+
+### Library log inventory and exact findings
+
+Checked the user's Library for newer Vita logs. The newest available Vita log is `stsvita(2).log`, created 2026-11-20 18:18:58 UTC, size 438,289 bytes, 2,241 lines. The two larger logs are from 2026-11-19. There is no log uploaded after the 2026-11-24 compressed-mip trace was committed.
+
+Parsed `stsvita(2).log`:
+
+- 1,801 `[act2-diag] draw-reserve` records.
+- 1,785 requests are 8,388,608 bytes from old caller `0x8156be5b`; 16 requests come from `0x81587df7` (nine 4 MiB, five 1 MiB, two 2 MiB).
+- All 1,801 records have `invalid=0`; 1,791 have `overflow=0`, and 10 have `overflow=1`. The pool index rotates across 0/1/2 (593/607/601 records).
+- No `draw-reserve-INVALID`, no `[act2-diag] mem` snapshots, no `[DIAG dxt] MIP` records, no PCM malloc failures, and no stb decode failures appear in this log.
+- The process ends with `Clean shutdown successful` and `exiting with code 0`; this file does not contain the reported black-screen/audio-stop crash.
+- Frame diagnostics show a 7.4 s game-thread hitch with 3.385 s attributed to I/O, 53 ms to FreeType, 7 ms to glyph sub-uploads, 68 ms to texture upload, and 79 ms to stats. This is a loading/stall observation from this session, not evidence of the Act-transition memory failure.
+
+### Interpretation
+
+This log predates the compressed-mip trace and cannot validate the new `MIP` fields or map its old caller address against the current binary. Its repeated successful 8 MiB reservations and normal shutdown also must not be conflated with the older failure log: the sessions/builds differ, and this run contains no memory snapshots around an Act transition.
+
+The current `[DIAG dxt] MIP` trace is emitted before the wrapped `glCompressedTexImage2D` call and is bounded to 128 records. It records the base descriptor, per-level bytes, estimated cumulative chain bytes, preflight pool/spill state, and admission result. It is sufficient to identify whether a level>0 upload is attempted and whether the preflight is materially smaller than the VitaGL chain estimate; it cannot prove whether VitaGL's internal `vgl_realloc` grew in place or entered its old-plus-new fallback. No new post-upload marker was added because the existing unbuffered pre-call record plus subsequent log continuity is enough to establish whether the call returned; a separate marker would duplicate information before the first same-build trace is available.
+
+### Next concrete task
+
+1. Do not change allocator, texture admission, spill budget, audio, or rendering based on the 2026-11-19/20 logs.
+2. Obtain one log from a build containing commit `79588c1` or its descendants during the previously failing Act transition. First verify whether any `[DIAG dxt] MIP` record has `base_known=0`, `base_fmt_match=0`, or `chain_est_bytes` materially greater than `image_bytes`; correlate texture ID/path with adjacent `[act2-diag] mem` and `draw-reserve` events.
+3. If the trace shows a mip-chain growth near the failure, the remaining source-level distinction is whether the VitaGL realloc succeeds in place or needs a simultaneous old+new allocation. The prebuilt VitaGL library does not expose that result through the current wrapper; only then decide whether a narrowly pinned VitaGL source patch is justified.
+4. Keep the current visual/audio quality and pool sizes unchanged until that evidence exists.
+
+No C/Java runtime source or tests changed in this run. This note records a precise evidence gap; it does not claim a memory fix or physical Vita validation.
