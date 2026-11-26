@@ -745,3 +745,55 @@ The current `[DIAG dxt] MIP` trace is emitted before the wrapped `glCompressedTe
 4. Keep the current visual/audio quality and pool sizes unchanged until that evidence exists.
 
 No C/Java runtime source or tests changed in this run. This note records a precise evidence gap; it does not claim a memory fix or physical Vita validation.
+
+
+## 2026-11-26 — pinned VitaGL mip-allocation failure-path cross-check
+
+### Branch and source provenance
+
+- Work branch: `optimization/baseline-profiling`.
+- Branch head before this note: `5566b3b7cd55ebe51cbc3e1762288b32af81801c` (`docs: record latest Vita log provenance for mip trace`).
+- No repository source change was made in this run.
+- Cross-checked the pinned VitaGL source at `Rinnegatamante/vitaGL` commit `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`, matching the previously recorded VitaSDK package revision `0.0.0.r1488.g2bdbe89-1`.
+
+### Confirmed allocation-failure paths
+
+1. **Compressed mip-chain growth** — `source/utils/gpu_utils.c:663-718`, especially 693-708:
+   - For a higher mip level beyond the current chain, VitaGL computes the cumulative `tex_size` and calls `vgl_realloc(tex->data, tex_size)`.
+   - If that fails, it allocates a second full-chain block with `gpu_alloc_mapped_for_gpu(tex_size)` while the old `tex->data` is still live.
+   - The returned pointer is passed to `vgl_memcpy(texture_data, tex->data, old_data_size)` without a NULL check. Only after the copy does it call `gpu_free_texture_data(tex)`.
+   - Therefore a failed second allocation can cause a NULL-destination copy; a successful fallback also has an old-plus-new transient peak. This is a real source-level failure mode, not proof that the reported Act-transition crash took this branch.
+
+2. **Uncompressed mipmap growth** — `source/utils/gpu_utils.c:808-859`, especially 853-859:
+   - `gpu_alloc_mipmaps()` has the same pattern: failed `vgl_realloc`, full-size `gpu_alloc_mapped_for_gpu(size)`, then an unchecked `vgl_memcpy(texture_data, tex->data, ...)`, followed by freeing the old data.
+   - This path is relevant to non-compressed textures that request additional mip levels. It has the same NULL-destination and old-plus-new peak risks.
+
+3. **Fallback allocator behavior**:
+   - `source/utils/gpu_utils.h:42-43` maps `gpu_alloc_mapped_for_gpu(size)` to `gpu_alloc_mapped_aligned_for_gpu(MEM_ALIGNMENT, size)`.
+   - `source/utils/gpu_utils.c:103-112` tries VRAM, RAM, PHYCONT, budget memory, then external/newlib memory; each individual pool must satisfy the allocation.
+   - `source/utils/gpu_utils.c:236-258` then attempts unsafe GC recovery if the first pass fails.
+   - `source/shared.h:49` sets `FRAME_PURGE_FREQ=4`. In the non-single-threaded GC branch, each retry waits on the GC semaphore and includes a one-second delay; in a single-threaded build it invokes the collector directly. The exact VitaSDK package GC build flags are not established here, so the delay behavior is conditional.
+   - `source/utils/mem_utils.c:770-804` confirms that a failed pool/newlib realloc returns NULL while the caller still owns the old allocation; VitaGL does not free that old block until after the manual copy succeeds.
+
+### Relation to this repository's current diagnostics
+
+- The repository's `__wrap_vgl_reserve_data_pool()` protects the **circular draw-scratch overflow** path by using `vglForceAlloc` and calling `vglLazyFree` only for non-NULL results. It prevents vitaGL's NULL GC-list sentinel issue for that specific path.
+- That wrapper does not intercept the compressed/uncompressed mip-chain fallback above: those paths call `gpu_alloc_mapped_for_gpu()`, not `vgl_reserve_data_pool()`.
+- The current compressed-mip trace already records level, texture id, base descriptor, per-level bytes, cumulative estimated chain bytes, preflight pool state, spill charge, and admission. A same-build Act-transition log is still required to show whether either mip path is exercised near the failure and whether the cumulative request is materially larger than the current-level preflight.
+
+### Safe patch shape, not yet applied
+
+If a same-build runtime log ties the failure to one of these paths, the narrow VitaGL-side correction is to check the second allocation before copying or freeing the old texture:
+- On a failed replacement allocation, return from the mip-growth helper with the existing texture allocation and mip count untouched.
+- Do not free or overwrite the old texture when the new full-chain allocation is NULL.
+- The new mip level is then omitted rather than corrupting the old texture or dereferencing NULL; this preserves the already-valid base image and does not lower texture/audio quality globally.
+- Apply the equivalent guard to both compressed and uncompressed mip growth only if the custom VitaGL build path is adopted and the patch is reviewed against the exact pinned revision.
+
+No patch was applied because this repository currently links the VitaSDK-provided prebuilt vitaGL library. The application-side wrappers cannot safely change the internal ownership/return behavior of these helpers. A reproducible custom VitaGL build/override path would be needed before the source fix could reach the Vita executable. Do not substitute a cumulative-size preflight alone: it can reject an allocation that would have grown in place and cause a visual regression.
+
+### Validation and next task
+
+- Latest branch-head Host Actions run `45613036044` on `5566b3b7cd55ebe51cbc3e1762288b32af81801c`: job `host-tests` succeeded; the actual syntax, build-help, and host-test steps all completed successfully.
+- This run changed only `handoff.md`; no C/Java tests or VitaSDK build were rerun.
+- No proprietary JAR/assets, generated game assets, or VPK were accessed, created, or uploaded. No physical Vita success is claimed.
+- Next: continue source-only review of the VitaGL mip failure path and determine the smallest reproducible custom-library integration that can be tested without proprietary game data. Do not alter pool sizes, allocator policy, texture/audio quality, or the existing play-feel settings. A real device log from the current compressed-mip diagnostic build remains necessary to establish whether this is the reported Act-transition path.
