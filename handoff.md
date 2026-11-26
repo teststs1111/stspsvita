@@ -797,3 +797,82 @@ No patch was applied because this repository currently links the VitaSDK-provide
 - This run changed only `handoff.md`; no C/Java tests or VitaSDK build were rerun.
 - No proprietary JAR/assets, generated game assets, or VPK were accessed, created, or uploaded. No physical Vita success is claimed.
 - Next: continue source-only review of the VitaGL mip failure path and determine the smallest reproducible custom-library integration that can be tested without proprietary game data. Do not alter pool sizes, allocator policy, texture/audio quality, or the existing play-feel settings. A real device log from the current compressed-mip diagnostic build remains necessary to establish whether this is the reported Act-transition path.
+
+
+## 2026-11-26 — older Act-transition logs reveal the actual reserve-failure boundary
+
+### Log provenance and scope
+
+This run searched the Library for the two older 2026-11-19 Vita logs that predate the 2026-11-24 compressed-mip trace. They had not been included in the previous handoff's detailed analysis:
+
+- `stsvita.log`: uploaded 2026-11-19 10:43 UTC, 15,482,834 bytes, 68,410 lines.
+- `stsvita(1).log`: uploaded 2026-11-19 23:23 UTC, 12,864,790 bytes, 57,160 lines.
+
+The newer `stsvita(2).log` remains the previously reviewed clean/shorter log. The two older files are useful because they contain the earlier resource-exhaustion events, but neither includes the newer compressed-mip records.
+
+### 2026-11-19 `stsvita.log`: hard exhaustion immediately before invalid reserve results
+
+Parsed all 67,128 `[act2-diag] draw-reserve` records:
+
+- 67,007 requests came from caller `0x8155be5b`; all requested exactly 8,388,608 bytes (8 MiB).
+- 66,969 of those 8 MiB requests completed from the circular pool (`overflow=0 invalid=0`).
+- Four overflow requests returned a non-NULL pointer.
+- The final 34 overflow requests returned NULL (`overflow=1 invalid=1`), beginning at line 68,343 and continuing to the end of the file at line 68,410.
+- Therefore the 8 MiB request is **not** falling back on every call. Almost all requests fit the rotating circular pool; the fallback failures are a late-session boundary condition.
+
+The immediately preceding sequence is:
+
+- Line 68,336: `[DIAG stb] decode FAILED reason=bad png sig`; the reason is an invalid PNG signature, not an allocation-failure message. Keep this separate from the OOM evidence.
+- Line 68,337: `[DIAG vgl]` reports VRAM 95/96 MiB, RAM 70/78 MiB, PHYCONT 16/26 MiB, and external/newlib used 240 MiB.
+- Line 68,341: sound PCM allocation fails for 7,862,828 bytes.
+- Lines 68,343 onward: 8 MiB reserve calls from `0x8155be5b` return NULL. The associated memory snapshots show `pool_free=49/6615/6412KB`, `newlib_free=2974KB`, `used=241785KB`, `arena=244760KB`.
+
+At that snapshot no individual VitaGL pool or external/newlib heap has an 8 MiB free allocation available. The repeated NULL results do not reduce the reported free-memory values further; the 34 failures are repeated attempts after exhaustion, not evidence of 34 additional leaks. The preceding PCM failure is consistent with the same newlib exhaustion (7.86 MiB requested versus about 2.9 MiB free).
+
+The older binary's `post_ptr` wraps to a low address (`0x00491ad0`) after the overflow. The current repository wrapper now sets the circular cursor to the pool limit before the overflow allocation, so that old pointer-wrap behavior is already addressed. That correction cannot make an 8 MiB allocation succeed when every individual pool is below 8 MiB.
+
+### 2026-11-19 `stsvita(1).log`: exhaustion was already present at Act 1 completion
+
+Parsed 55,636 draw-reserve records:
+
+- 55,516 requests of 8 MiB came from caller `0x81597e5b`.
+- 55,513 fit the circular pool; three overflow requests succeeded; none returned NULL.
+- The caller address differs from the other log, so it must not be mapped using a different build's ELF/disassembly.
+
+The memory snapshots show growth during the run:
+
+- Line 1,318 (`city-first-draw`): `pool_free=65/6424/5644KB`, `newlib_free=11465KB`, `used=223126KB`, `arena=234592KB`.
+- Line 55,398 (`act1-complete boss-victory`): `pool_free=49/2455/10508KB`, `newlib_free=2158KB`, `used=242197KB`, `arena=244356KB`.
+
+Between those checkpoints, newlib used memory rises by about 19 MiB and free memory falls by about 9 MiB; RAM-pool free space also falls by about 4 MiB. This establishes substantial retained/allocated growth before Act 2, but does not distinguish legitimate live assets from a leak.
+
+Line 56,166 records a 1,416,960-byte sound PCM allocation failure even though this log has no invalid draw-reserve result. Thus PCM allocation can fail before the 8 MiB reserve path itself fails.
+
+Only ten `[DIAG dxt]` records appear in this file: the nine boot-critical spill entries peak at 480 KiB, and the later memory snapshots report current tracked spill as 0 KiB. This tracked compressed-texture spill is not the large outstanding allocation visible in the heap/pool totals. It does not account for other VitaGL, game, pixmap, or audio allocations.
+
+### Narrowing the 8 MiB caller to two VitaGL buffer paths
+
+Rechecked the exact pinned VitaGL source (`2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8`). In this revision, the only `vgl_reserve_data_pool()` callsites in the source tree are in `source/buffers.c`:
+
+- `buffers.c:412-430`, `glNamedBufferData()`: for a scratch buffer it reserves the full `size`. If the reserve returns NULL, it sets `GL_OUT_OF_MEMORY` under the normal error-handling build but still reaches `vgl_fast_memcpy(gpu_buf->ptr, data, size)` when `data` is non-NULL. That is a NULL-destination risk.
+- `buffers.c:470-505`, `glNamedBufferSubData()`: when `last_frame` is within `FRAME_PURGE_FREQ` (4 frames), it reserves the **entire** `gpu_buf->size`, copies the unchanged prefix and suffix plus the updated range, then swaps the buffer pointer. A small subdata update can therefore request an 8 MiB scratch copy. Its NULL check is conditional on `LOG_ERRORS`; without that define, the following copies can dereference NULL.
+
+This makes the repeated 8 MiB request plausibly a full-buffer copy caused by a recently used dynamic/stream buffer, but the old logs do not distinguish `glBufferData` from `glBufferSubData`. The exact return address is still unmapped because the matching 2026-11-19 ELF/map and the earlier `native-callsite-disassembly` artifact are no longer available. Do not map `0x8155be5b` or `0x81597e5b` against a different build.
+
+The current repository already wraps `glBufferData` and `glBufferSubData` and logs target, offset, update size, data pointer, and draw-tracking state. On a same-build trace, correlate those records with the reserve caller/size:
+- An 8 MiB `buffer-data` record identifies the allocation path.
+- A small `buffer-subdata` update immediately preceding an 8 MiB reserve identifies the full-buffer copy path.
+The latter should then be traced through the buffer's `size`, `scratch`, `last_frame`, and replacement lifetime before considering any optimization.
+
+### Interpretation
+
+The logs now establish a real native resource-exhaustion boundary: newlib is almost full, VRAM/RAM pools are nearly exhausted, PCM allocation fails, and a later 8 MiB circular-pool overflow cannot be satisfied by any single allocator pool. They do **not** prove a persistent leak. The 8 MiB requests are predominantly bounded circular-pool use; the repeated failures happen only after the broader memory pressure is already severe.
+
+No change to pool size, buffer update semantics, texture quality, audio quality, or allocator behavior is justified from these logs alone. The current compressed-mip diagnostics remain necessary because both 2026-11-19 logs predate them.
+
+### Validation and next task
+
+- Current work branch before this note: `optimization/baseline-profiling`, head `cfec593630835dffc42c4d19c16bac1d9ddb0049`.
+- Handoff-only commit `cfec593630835dffc42c4d19c16bac1d9ddb0049` triggered Host Actions run `45819058917`; the actual `host-tests` job completed successfully, including `bash -n build.sh`, `./build.sh --help`, and `make test`.
+- No VitaSDK build or physical Vita test was performed in this run. No proprietary JAR/assets, generated game assets, or VPK were accessed or created. The old callsite-disassembly artifact is unavailable (GitHub artifact lookup returned 404).
+- Next: use the existing buffer-data/subdata wrappers plus the compressed-mip trace in one matching diagnostic build to identify which buffer operation owns the 8 MiB request and whether mip-chain growth contributes to the same memory boundary. Then trace the corresponding buffer/texture lifetime. Keep the current pointer-wrap correction; do not increase pools or change buffer/texture/audio behavior without that correlation.
