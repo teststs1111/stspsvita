@@ -4,6 +4,7 @@
 #include "stsv_compressed_mip_diag.h"
 #include "stsv_reserve_fallback.h"
 #include "stsv_legacy_pool_diag.h"
+#include "stsv_buffer_diag.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -535,17 +536,41 @@ void *__real_vgl_reserve_data_pool(uint32_t size);
  * making synchronous stderr/file logging a frame-time bottleneck itself. */
 #define STSV_RESERVE_LOG_SITES 128
 #define STSV_RESERVE_LOG_SAMPLE_EVERY 1024u
+static stsv_buffer_diag_context stsv_buffer_diag_current;
 static struct {
     const void *caller;
     uint32_t size;
+    uint32_t buffer_op;
+    uint32_t buffer_id;
     uint32_t count;
 } stsv_reserve_log_sites[STSV_RESERVE_LOG_SITES];
 static unsigned int stsv_reserve_log_site_count;
 
-static int stsv_should_log_large_reserve(const void *caller, uint32_t size) {
+/* glGetIntegerv in pinned vitaGL r1488 reads these two bindings directly.
+ * Uniform-buffer binding is not implemented by that revision's query switch,
+ * so leave its id explicitly unknown rather than querying an unsupported enum. */
+static uint32_t stsv_buffer_diag_bound_id(GLenum target, int *known) {
+    GLint id = 0;
+    if (known != NULL) *known = 0;
+    if (target == GL_ARRAY_BUFFER) {
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &id);
+        if (known != NULL) *known = 1;
+    } else if (target == GL_ELEMENT_ARRAY_BUFFER) {
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &id);
+        if (known != NULL) *known = 1;
+    }
+    /* VitaGL stores vbo pointers in GLuint; preserve all 32 bits even when
+     * the signed GLint representation is negative. */
+    return (uint32_t) id;
+}
+
+static int stsv_should_log_large_reserve(const void *caller, uint32_t size,
+                                         uint32_t buffer_op, uint32_t buffer_id) {
     for (unsigned int i = 0; i < stsv_reserve_log_site_count; i++) {
         if (stsv_reserve_log_sites[i].caller == caller
-                && stsv_reserve_log_sites[i].size == size) {
+                && stsv_reserve_log_sites[i].size == size
+                && stsv_reserve_log_sites[i].buffer_op == buffer_op
+                && stsv_reserve_log_sites[i].buffer_id == buffer_id) {
             uint32_t count = ++stsv_reserve_log_sites[i].count;
             return count <= 4u || count % STSV_RESERVE_LOG_SAMPLE_EVERY == 0;
         }
@@ -556,6 +581,8 @@ static int stsv_should_log_large_reserve(const void *caller, uint32_t size) {
     unsigned int i = stsv_reserve_log_site_count++;
     stsv_reserve_log_sites[i].caller = caller;
     stsv_reserve_log_sites[i].size = size;
+    stsv_reserve_log_sites[i].buffer_op = buffer_op;
+    stsv_reserve_log_sites[i].buffer_id = buffer_id;
     stsv_reserve_log_sites[i].count = 1;
     return 1;
 }
@@ -595,19 +622,37 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
     }
     int invalid = result == NULL || (uintptr_t) result < UINT32_C(0x10000000);
     int trace = stsv_trace_current_draw;
+    uint32_t buffer_op = (uint32_t) stsv_buffer_diag_current.op;
+    uint32_t buffer_id = stsv_buffer_diag_current.buffer_id_known
+            ? stsv_buffer_diag_current.buffer_id : 0;
     int large_sample = size >= (1u << 20)
-            && stsv_should_log_large_reserve(caller, size);
+            && stsv_should_log_large_reserve(caller, size, buffer_op, buffer_id);
+    int64_t buffer_size = stsv_buffer_diag_reserve_capacity(
+            &stsv_buffer_diag_current, size);
     if (trace || invalid || large_sample) {
         fprintf(stderr,
                 "[act2-diag] draw-reserve seq=%d mode=0x%x count=%d "
                 "type=0x%x indices=%p size=%u caller=%p result=%p "
                 "invalid=%d idx=%d overflow=%d "
+                "gl_op=%s gl_target=0x%x gl_buffer=%u gl_buffer_known=%d "
+                "gl_buffer_size=%lld gl_offset=%lld gl_update_size=%lld "
+                "gl_usage=0x%x gl_data=%p "
                 "circular=%p ptr=%p limit=%p post_ptr=%p\n",
                 stsv_city_draw_seq, (unsigned int) stsv_current_draw_mode,
                 (int) stsv_current_draw_count,
                 (unsigned int) stsv_current_draw_type,
                 stsv_current_draw_indices, (unsigned int) size, caller, result,
-                invalid, idx, overflow, (void *) base, (void *) before, (void *) limit,
+                invalid, idx, overflow,
+                stsv_buffer_diag_op_name(stsv_buffer_diag_current.op),
+                (unsigned int) stsv_buffer_diag_current.target,
+                (unsigned int) stsv_buffer_diag_current.buffer_id,
+                stsv_buffer_diag_current.buffer_id_known,
+                (long long) buffer_size,
+                (long long) stsv_buffer_diag_current.offset,
+                (long long) stsv_buffer_diag_current.update_size,
+                (unsigned int) stsv_buffer_diag_current.usage,
+                (void *) stsv_buffer_diag_current.data,
+                (void *) base, (void *) before, (void *) limit,
                 idx >= 0 && idx < 4 ? (void *) circular_data_pool_ptr[idx] : NULL);
     }
     if (invalid) {
@@ -623,22 +668,40 @@ void *__wrap_vgl_reserve_data_pool(uint32_t size) {
  * records tell whether the pressure comes from buffer creation or updates. */
 void __real_glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage);
 void __wrap_glBufferData(GLenum target, GLsizeiptr size, const GLvoid *data, GLenum usage) {
+    stsv_buffer_diag_context previous = stsv_buffer_diag_current;
+    int buffer_known = 0;
+    uint32_t buffer_id = stsv_buffer_diag_bound_id(target, &buffer_known);
+    stsv_buffer_diag_current = stsv_buffer_diag_make_data(
+            (uint32_t) target, buffer_id, buffer_known, (int64_t) size,
+            (uint32_t) usage, (uintptr_t) data);
     if (stsv_city_draw_tracking || size >= (1 << 20)) {
-        fprintf(stderr, "[act2-diag] buffer-data target=0x%x size=%ld usage=0x%x data=%p tracking=%d\n",
-                (unsigned int) target, (long) size, (unsigned int) usage, data,
-                stsv_city_draw_tracking);
+        fprintf(stderr,
+                "[act2-diag] buffer-data target=0x%x buffer=%u buffer_known=%d "
+                "size=%ld usage=0x%x data=%p tracking=%d\n",
+                (unsigned int) target, (unsigned int) buffer_id, buffer_known,
+                (long) size, (unsigned int) usage, data, stsv_city_draw_tracking);
     }
     __real_glBufferData(target, size, data, usage);
+    stsv_buffer_diag_current = previous;
 }
 
 void __real_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid *data);
 void __wrap_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid *data) {
+    stsv_buffer_diag_context previous = stsv_buffer_diag_current;
+    int buffer_known = 0;
+    uint32_t buffer_id = stsv_buffer_diag_bound_id(target, &buffer_known);
+    stsv_buffer_diag_current = stsv_buffer_diag_make_subdata(
+            (uint32_t) target, buffer_id, buffer_known, (int64_t) offset,
+            (int64_t) size, (uintptr_t) data);
     if (stsv_city_draw_tracking || size >= (1 << 20)) {
-        fprintf(stderr, "[act2-diag] buffer-subdata target=0x%x offset=%ld size=%ld data=%p tracking=%d\n",
-                (unsigned int) target, (long) offset, (long) size, data,
-                stsv_city_draw_tracking);
+        fprintf(stderr,
+                "[act2-diag] buffer-subdata target=0x%x buffer=%u buffer_known=%d "
+                "offset=%ld size=%ld data=%p tracking=%d\n",
+                (unsigned int) target, (unsigned int) buffer_id, buffer_known,
+                (long) offset, (long) size, data, stsv_city_draw_tracking);
     }
     __real_glBufferSubData(target, offset, size, data);
+    stsv_buffer_diag_current = previous;
 }
 
 void __real_glDrawElements(GLenum mode, GLsizei count, GLenum type,
