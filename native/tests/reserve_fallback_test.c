@@ -1,4 +1,5 @@
 #include "stsv_reserve_fallback.h"
+#include "stsv_buffer_diag.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -69,11 +70,62 @@ static void test_missing_defer_callback_does_not_allocate(void) {
     assert(deferred_calls == 0);
 }
 
+
+static void test_buffer_data_context_keeps_requested_capacity(void) {
+    stsv_buffer_diag_context context = stsv_buffer_diag_make_data(
+            0x8892u, UINT32_C(0x81234567), 1,
+            INT64_C(8388608), 0x88E0u, (uintptr_t) 0x1234u);
+    assert(context.op == STSV_BUFFER_DIAG_DATA);
+    assert(context.target == 0x8892u);
+    assert(context.buffer_id == UINT32_C(0x81234567));
+    assert(context.buffer_id_known);
+    assert(context.buffer_size == INT64_C(8388608));
+    assert(context.offset == 0);
+    assert(context.update_size == INT64_C(8388608));
+    assert(context.usage == 0x88E0u);
+    assert(context.data == (uintptr_t) 0x1234u);
+    assert(stsv_buffer_diag_reserve_capacity(&context, 4096u)
+            == INT64_C(8388608));
+    assert(stsv_buffer_diag_op_name(context.op) != NULL);
+}
+
+static void test_buffer_subdata_context_uses_full_reserve_size(void) {
+    stsv_buffer_diag_context context = stsv_buffer_diag_make_subdata(
+            0x8892u, UINT32_C(0x81234567), 1,
+            INT64_C(256), INT64_C(64), (uintptr_t) 0x5678u);
+    assert(context.op == STSV_BUFFER_DIAG_SUBDATA);
+    assert(context.target == 0x8892u);
+    assert(context.buffer_id == UINT32_C(0x81234567));
+    assert(context.buffer_id_known);
+    assert(context.buffer_size == -1);
+    assert(context.offset == INT64_C(256));
+    assert(context.update_size == INT64_C(64));
+    assert(context.usage == 0);
+    assert(context.data == (uintptr_t) 0x5678u);
+    /* vitaGL r1488 reserves gpu_buf->size, not the small update size. */
+    assert(stsv_buffer_diag_reserve_capacity(&context, 8388608u)
+            == INT64_C(8388608));
+}
+
+static void test_unknown_buffer_context_does_not_invent_capacity(void) {
+    stsv_buffer_diag_context context = stsv_buffer_diag_make_subdata(
+            0x8A11u, 0, 0, 0, 16, 0);
+    assert(!context.buffer_id_known);
+    assert(context.buffer_id == 0);
+    assert(stsv_buffer_diag_reserve_capacity(&context, 16u) == 16);
+    stsv_buffer_diag_context empty = {0};
+    assert(stsv_buffer_diag_reserve_capacity(&empty, 16u) == -1);
+    assert(stsv_buffer_diag_op_name(STSV_BUFFER_DIAG_NONE) != NULL);
+}
+
 int main(void) {
     test_pool_boundary_matches_vitagl();
     test_pool_cursor_saturates_after_overflow();
     test_success_is_deferred_once();
     test_failed_alloc_is_not_enqueued();
     test_missing_defer_callback_does_not_allocate();
+    test_buffer_data_context_keeps_requested_capacity();
+    test_buffer_subdata_context_uses_full_reserve_size();
+    test_unknown_buffer_context_does_not_invent_capacity();
     return 0;
 }
