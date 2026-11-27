@@ -876,3 +876,46 @@ No change to pool size, buffer update semantics, texture quality, audio quality,
 - Handoff-only commit `cfec593630835dffc42c4d19c16bac1d9ddb0049` triggered Host Actions run `45819058917`; the actual `host-tests` job completed successfully, including `bash -n build.sh`, `./build.sh --help`, and `make test`.
 - No VitaSDK build or physical Vita test was performed in this run. No proprietary JAR/assets, generated game assets, or VPK were accessed or created. The old callsite-disassembly artifact is unavailable (GitHub artifact lookup returned 404).
 - Next: use the existing buffer-data/subdata wrappers plus the compressed-mip trace in one matching diagnostic build to identify which buffer operation owns the 8 MiB request and whether mip-chain growth contributes to the same memory boundary. Then trace the corresponding buffer/texture lifetime. Keep the current pointer-wrap correction; do not increase pools or change buffer/texture/audio behavior without that correlation.
+
+
+## 2026-11-27 — correlate each large reserve with its enclosing GL buffer operation
+
+### Branch and source provenance
+
+- Work branch before this note: `optimization/baseline-profiling`, head `6b141f463bfd04ccce25c47938ebd0aa9ce2dc6f`.
+- The prior handoff already narrowed the pinned VitaGL revision to `2bdbe895ddc6a7e410a9ea55a8f53d8173c61ad8` (`0.0.0.r1488.g2bdbe89-1`); this run rechecked the exact buffer implementation and `glGetIntegerv` query switch at that same revision.
+- No source change was made to VitaGL itself, allocator policy, buffer semantics, pool sizes, rendering, textures, or audio.
+
+### Confirmed source behavior
+
+- `source/buffers.c::glNamedBufferData` reserves exactly the requested `size` for scratch buffers. After a NULL reservation it sets `GL_OUT_OF_MEMORY` when error handling is enabled, but still reaches the copy if `data != NULL`; this is a source-level NULL-destination hazard.
+- `source/buffers.c::glNamedBufferSubData` reserves `gpu_buf->size` (the entire buffer) when `last_frame` is within `FRAME_PURGE_FREQ`, even if the requested update is small. Its NULL guard exists only under `LOG_ERRORS`; without that define, the subsequent prefix/update/suffix copies can use a NULL destination.
+- The old wrapper's standalone `buffer-subdata` log was gated on a large update size or the first City draw-tracking window. Therefore a small update outside that window could trigger an 8 MiB reserve without its enclosing operation being logged. The previous handoff's proposed correlation was incomplete for that case.
+- Pinned `get_info.c::glGetIntegerv` directly supports `GL_ARRAY_BUFFER_BINDING` and `GL_ELEMENT_ARRAY_BUFFER_BINDING`; it does not implement a uniform-buffer binding query. The buffer id is a VitaGL vbo pointer stored in `GLuint`, so the trace preserves all 32 bits even when the signed `GLint` value is negative.
+
+### Diagnostic change
+
+- Added `native/src/glue/stsv_buffer_diag.h` to carry a bounded, stack-restored context for `glBufferData` and `glBufferSubData`.
+- Extended the existing wrappers in `native/src/glue/gl_common_glue.c`. Before entering VitaGL, they capture target, known bound buffer id, offset, update size, usage, and data pointer. The context remains active only during the real GL call and is restored afterward.
+- The nested `__wrap_vgl_reserve_data_pool` record now includes `gl_op`, `gl_target`, `gl_buffer`, `gl_buffer_known`, `gl_buffer_size`, `gl_offset`, `gl_update_size`, `gl_usage`, and `gl_data`.
+- For `glBufferSubData`, `gl_buffer_size` is derived from the nested reserve size because the pinned VitaGL source passes `gpu_buf->size` to `vgl_reserve_data_pool`. This exposes the full allocation even when the update itself is tiny.
+- Large-reserve sampling is now keyed by caller, reserve size, GL operation, and known buffer id. Different buffer objects no longer collapse into the same sampling bucket.
+- The binding query is performed before entering VitaGL's buffer function, not from inside the reserve wrapper; this avoids re-entering a GL query while VitaGL's `THREAD_SAFE` section is active. It is read-only, does not allocate, and does not change GL state. Uniform-buffer ids are explicitly marked unknown rather than querying an unsupported enum.
+- Extended the existing `native/tests/reserve_fallback_test.c` with three buffer-context regression cases. The existing Makefile already compiles this test, so no new test target was needed.
+
+### Validation and limitations
+
+- The new helper + regression cases compiled with `cc -std=c11 -Wall -Wextra -Werror` and ran successfully in a local isolated harness (exit 0).
+- The GitHub Host-side checks workflow is configured for pushes to `optimization/**`. However, the available Actions lookup only returns PR-triggered runs; `fetch_commit_workflow_runs` returned no run for this push commit, and the commit status endpoint returned no status records. Therefore no GitHub CI result is claimed for this change.
+- A local clone was unavailable because the execution environment could not resolve `github.com`; `bash -n build.sh`, `./build.sh --help`, and full `make test` were not run locally.
+- The Vita-specific `gl_common_glue.c` translation unit was not compiled in this run; a VitaSDK build remains necessary before treating the instrumentation as build-verified.
+- No proprietary JAR/assets, generated game assets, or VPK were accessed, created, or uploaded. No physical Vita result is claimed.
+
+### Next concrete task
+
+1. On a VitaSDK build containing this commit, confirm the new `draw-reserve` fields are present and that the build links.
+2. In a same-build long-session/Act-transition log, classify the 8 MiB reserve by `gl_op`:
+   - `buffer-data`: `gl_buffer_size` should equal the allocation argument; inspect its usage and buffer id.
+   - `buffer-subdata`: compare the small `gl_update_size` / `gl_offset` with the 8 MiB `gl_buffer_size`; the latter is the full buffer capacity, and the source path is the recent-use copy branch.
+3. Correlate the buffer id with later large reserves and existing Act memory snapshots. If the same object is repeatedly replaced, then add narrowly sampled deletion/redefinition lifetime records for that id only if the current trace still cannot establish its release boundary.
+4. Keep the source-level NULL-copy hazard as a candidate, not a claimed crash root cause. Do not patch the prebuilt VitaGL library or change buffer/texture/audio behavior until a same-build trace confirms the path and a reproducible patched-library integration is available.
